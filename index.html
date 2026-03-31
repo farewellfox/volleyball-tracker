@@ -1,0 +1,490 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font-sans);color:var(--color-text-primary);}
+.page{display:none;}.page.active{display:block;}
+.tab-bar{display:flex;gap:4px;border-bottom:0.5px solid var(--color-border-tertiary);margin-bottom:1.5rem;}
+.tab{padding:8px 16px;font-size:14px;cursor:pointer;border:none;background:none;color:var(--color-text-secondary);border-bottom:2px solid transparent;margin-bottom:-0.5px;}
+.tab.active{color:var(--color-text-primary);border-bottom-color:var(--color-text-primary);font-weight:500;}
+.section{display:none;}.section.active{display:block;}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;margin-bottom:12px;}
+.metric-card{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;text-align:center;}
+.metric-label{font-size:13px;color:var(--color-text-secondary);margin-bottom:4px;}
+.metric-val{font-size:24px;font-weight:500;}
+.player-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:0.5px solid var(--color-border-tertiary);}
+.player-row:last-child{border-bottom:none;}
+.avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0;}
+.skill-badge{font-size:12px;padding:2px 8px;border-radius:20px;font-weight:500;}
+.btn{padding:8px 16px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);background:transparent;cursor:pointer;font-size:14px;color:var(--color-text-primary);}
+.btn:hover{background:var(--color-background-secondary);}
+.btn-primary{background:var(--color-text-primary);color:var(--color-background-primary);border-color:transparent;}
+.btn-primary:hover{opacity:0.85;}
+.btn-sm{padding:4px 10px;font-size:12px;}
+.btn-danger{color:#A32D2D;border-color:#F7C1C1;}
+.btn-danger:hover{background:#FCEBEB;}
+.row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.ninja-hdr{background:#E6F1FB;color:#0C447C;padding:10px 14px;border-radius:var(--border-radius-md);text-align:center;font-weight:500;font-size:14px;margin-bottom:10px;}
+.mamie-hdr{background:#FBEAF0;color:#72243E;padding:10px 14px;border-radius:var(--border-radius-md);text-align:center;font-weight:500;font-size:14px;margin-bottom:10px;}
+.score-input{width:60px;text-align:center;font-size:18px;font-weight:500;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:6px;background:var(--color-background-primary);color:var(--color-text-primary);}
+.win-btn{padding:6px 14px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-secondary);cursor:pointer;font-size:13px;background:transparent;color:var(--color-text-primary);}
+.win-btn.sel-ninja{background:#E6F1FB;color:#0C447C;border-color:#B5D4F4;}
+.win-btn.sel-mamie{background:#FBEAF0;color:#72243E;border-color:#F4C0D1;}
+.win-btn.sel-draw{background:var(--color-background-secondary);border-color:var(--color-border-secondary);}
+.pct-bar-wrap{width:70px;height:6px;background:var(--color-background-secondary);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:8px;}
+.pct-bar{height:100%;border-radius:3px;background:#378ADD;}
+.game-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px;}
+.game-row:last-child{border-bottom:none;}
+.empty{color:var(--color-text-secondary);font-size:14px;text-align:center;padding:2rem;}
+.section-title{font-size:15px;font-weight:500;margin-bottom:12px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:16px;}
+.present-toggle{width:20px;height:20px;cursor:pointer;flex-shrink:0;accent-color:#378ADD;}
+.lock-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3rem 1rem;gap:12px;}
+.lock-icon{font-size:32px;margin-bottom:8px;}
+.admin-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);margin-bottom:16px;font-size:13px;}
+.badge-ninja{background:#E6F1FB;color:#0C447C;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:500;}
+.badge-mamie{background:#FBEAF0;color:#72243E;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:500;}
+.badge-draw{background:var(--color-background-secondary);color:var(--color-text-secondary);padding:2px 8px;border-radius:20px;font-size:12px;}
+.duo-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:14px;}
+.duo-row:last-child{border-bottom:none;}
+.top-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;padding-bottom:12px;border-bottom:0.5px solid var(--color-border-tertiary);}
+.app-title{font-size:16px;font-weight:500;}
+</style>
+
+<div style="padding:1rem 0;">
+
+<!-- PUBLIC PAGE -->
+<div id="page-public" class="page active">
+  <div class="top-nav">
+    <div>
+      <div class="app-title">Volleyball Teams</div>
+      <div style="font-size:12px;color:var(--color-text-secondary);" id="pub-subtitle">This week</div>
+    </div>
+    <button class="btn btn-sm" onclick="showAdminLogin()">Admin</button>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab active" onclick="pubTab('teams',this)">This week</button>
+    <button class="tab" onclick="pubTab('leaderboard',this)">Leaderboard</button>
+    <button class="tab" onclick="pubTab('log',this)">Game log</button>
+  </div>
+
+  <div id="pub-teams" class="section active">
+    <div id="pub-teams-content"></div>
+  </div>
+  <div id="pub-leaderboard" class="section">
+    <div class="section-title">Most wins</div>
+    <div class="card"><div id="pub-lb-list"></div></div>
+    <div class="section-title" style="margin-top:16px;">Best duos</div>
+    <div class="card"><div id="pub-duo-list"></div></div>
+  </div>
+  <div id="pub-log" class="section">
+    <div class="card"><div id="pub-log-list"></div></div>
+  </div>
+</div>
+
+<!-- ADMIN LOGIN PAGE -->
+<div id="page-login" class="page">
+  <div class="lock-wrap">
+    <div class="lock-icon">&#128274;</div>
+    <div style="font-size:15px;font-weight:500;">Admin access</div>
+    <div style="font-size:13px;color:var(--color-text-secondary);text-align:center;">Enter the admin password to manage roster, teams, and scores.</div>
+    <input type="password" id="pw-input" placeholder="Password" style="width:240px;text-align:center;" onkeydown="if(event.key==='Enter')tryLogin()" />
+    <div id="pw-error" style="font-size:13px;color:#A32D2D;display:none;">Wrong password.</div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary" onclick="tryLogin()">Sign in</button>
+      <button class="btn" onclick="showPage('public')">Back</button>
+    </div>
+    <div style="font-size:12px;color:var(--color-text-secondary);margin-top:8px;">Default password: <code>volleyball</code></div>
+  </div>
+</div>
+
+<!-- ADMIN PAGE -->
+<div id="page-admin" class="page">
+  <div class="top-nav">
+    <div class="app-title">Admin panel</div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-sm" onclick="showPage('public')">Public view</button>
+      <button class="btn btn-sm btn-danger" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab active" onclick="adminTab('roster',this)">Roster</button>
+    <button class="tab" onclick="adminTab('teams',this)">Teams</button>
+    <button class="tab" onclick="adminTab('record',this)">Record game</button>
+    <button class="tab" onclick="adminTab('stats',this)">Stats</button>
+  </div>
+
+  <!-- ROSTER -->
+  <div id="adm-roster" class="section active">
+    <div class="section-title">Player roster</div>
+    <div class="row" style="margin-bottom:16px;">
+      <input type="text" id="new-name" placeholder="Player name" style="flex:1;" />
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <span style="font-size:13px;color:var(--color-text-secondary);">Skill</span>
+        <input type="number" id="new-skill" min="1" max="10" value="5" style="width:56px;" />
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="addPlayer()">Add</button>
+    </div>
+    <div id="roster-list"></div>
+  </div>
+
+  <!-- TEAMS -->
+  <div id="adm-teams" class="section">
+    <div class="section-title">Who's playing today?</div>
+    <div id="present-list" style="margin-bottom:16px;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:20px;">
+      <button class="btn btn-primary" onclick="generateTeams()" style="flex:1;">Balance &amp; randomize</button>
+      <button class="btn" onclick="generateTeams()" title="Re-roll">&#8635; Re-roll</button>
+    </div>
+    <div id="teams-output"></div>
+    <div id="team-summary" style="display:none;margin-top:12px;">
+      <div class="grid2">
+        <div class="metric-card"><div class="metric-label">Ninja avg skill</div><div class="metric-val" id="ninja-avg">—</div></div>
+        <div class="metric-card"><div class="metric-label">Mamie avg skill</div><div class="metric-val" id="mamie-avg">—</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECORD -->
+  <div id="adm-record" class="section">
+    <div class="section-title">Record a game</div>
+    <div id="no-teams-msg" class="empty" style="display:none;">Generate teams first in the Teams tab.</div>
+    <div id="record-form" style="display:none;">
+      <div class="card" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <span style="font-size:13px;font-weight:500;color:#0C447C;">Ninja Warrior</span>
+          <span style="font-size:13px;font-weight:500;color:#72243E;">Les mamies</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:12px;">
+          <input type="number" id="score-ninja" class="score-input" placeholder="0" min="0" />
+          <span style="font-size:14px;color:var(--color-text-secondary);">vs</span>
+          <input type="number" id="score-mamie" class="score-input" placeholder="0" min="0" />
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">Winner</div>
+        <div style="display:flex;gap:8px;">
+          <button class="win-btn" id="win-ninja" onclick="selectWinner('ninja')">Ninja Warrior</button>
+          <button class="win-btn" id="win-mamie" onclick="selectWinner('mamie')">Les mamies</button>
+          <button class="win-btn" id="win-draw" onclick="selectWinner('draw')">Draw</button>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="recordGame()" style="width:100%;">Save game</button>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div id="adm-stats" class="section">
+    <div class="grid4">
+      <div class="metric-card"><div class="metric-label">Games</div><div class="metric-val" id="stat-played">0</div></div>
+      <div class="metric-card"><div class="metric-label">Ninja wins</div><div class="metric-val" id="stat-ninja">0</div></div>
+      <div class="metric-card"><div class="metric-label">Mamie wins</div><div class="metric-val" id="stat-mamie">0</div></div>
+      <div class="metric-card"><div class="metric-label">Draws</div><div class="metric-val" id="stat-draws">0</div></div>
+    </div>
+    <div class="section-title">Leaderboard</div>
+    <div class="card" style="margin-bottom:16px;"><div id="adm-lb-list"></div></div>
+    <div class="section-title">Duo win rates</div>
+    <div class="card" style="margin-bottom:16px;"><div id="adm-duo-list"></div></div>
+    <div class="section-title">Game log</div>
+    <div class="card"><div id="adm-log-list"></div></div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const ADMIN_PW = 'volleyball';
+let isAdmin = false;
+let selectedWinner = null;
+
+let state = {
+  players: [],
+  games: [],
+  currentNinja: [],
+  currentMamie: [],
+  publishedNinja: [],
+  publishedMamie: []
+};
+
+const COLORS=[['#E6F1FB','#0C447C'],['#EAF3DE','#27500A'],['#FAEEDA','#633806'],['#FBEAF0','#72243E'],['#E1F5EE','#085041'],['#FAECE7','#993C1D'],['#EEEDFE','#3C3489'],['#F1EFE8','#444441']];
+function gc(i){return COLORS[i%COLORS.length];}
+function skillColor(s){return s<=3?['#EAF3DE','#27500A']:s<=6?['#FAEEDA','#633806']:['#FCEBEB','#A32D2D'];}
+function avatarHTML(name,i,size=34){const[bg,tc]=gc(i);return `<div class="avatar" style="background:${bg};color:${tc};width:${size}px;height:${size}px;font-size:${size<30?10:12}px;">${name.slice(0,2).toUpperCase()}</div>`;}
+
+async function save(){try{await window.storage.set('vball-v2',JSON.stringify(state));}catch(e){}}
+async function load(){
+  try{const r=await window.storage.get('vball-v2');if(r)state=JSON.parse(r.value);}catch(e){}
+  renderAll();
+}
+
+function showPage(p){
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  if(p==='public'){renderPublic();}
+}
+
+function showAdminLogin(){showPage('login');document.getElementById('pw-error').style.display='none';document.getElementById('pw-input').value='';}
+
+function tryLogin(){
+  const pw=document.getElementById('pw-input').value;
+  if(pw===ADMIN_PW){isAdmin=true;showPage('admin');renderAdmin();}
+  else{document.getElementById('pw-error').style.display='block';}
+}
+
+function logout(){isAdmin=false;showPage('public');}
+
+function pubTab(t,btn){
+  document.querySelectorAll('#page-public .tab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('#page-public .section').forEach(s=>s.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('pub-'+t).classList.add('active');
+}
+
+function adminTab(t,btn){
+  document.querySelectorAll('#page-admin .tab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('#page-admin .section').forEach(s=>s.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('adm-'+t).classList.add('active');
+  if(t==='stats')renderAdminStats();
+  if(t==='teams')renderPresent();
+  if(t==='record')renderRecordForm();
+}
+
+function addPlayer(){
+  const name=document.getElementById('new-name').value.trim();
+  const skill=Math.min(10,Math.max(1,parseInt(document.getElementById('new-skill').value)||5));
+  if(!name)return;
+  state.players.push({id:Date.now(),name,skill,present:true});
+  document.getElementById('new-name').value='';
+  document.getElementById('new-skill').value=5;
+  save();renderRoster();
+}
+
+function removePlayer(id){
+  if(!confirm('Remove this player?'))return;
+  state.players=state.players.filter(p=>p.id!==id);
+  save();renderRoster();
+}
+
+function updateSkill(id,val){
+  const p=state.players.find(p=>p.id===id);
+  if(p){p.skill=Math.min(10,Math.max(1,parseInt(val)||5));save();}
+}
+
+function togglePresent(id,val){
+  const p=state.players.find(p=>p.id===id);
+  if(p){p.present=val;save();}
+}
+
+function renderRoster(){
+  const el=document.getElementById('roster-list');
+  if(!state.players.length){el.innerHTML='<div class="empty">No players yet.</div>';return;}
+  el.innerHTML=state.players.map((p,i)=>`
+    <div class="player-row">
+      ${avatarHTML(p.name,i)}
+      <span style="flex:1;font-size:14px;">${p.name}</span>
+      <span style="font-size:12px;color:var(--color-text-secondary);">skill</span>
+      <input type="number" min="1" max="10" value="${p.skill}" style="width:52px;" onchange="updateSkill(${p.id},this.value)" />
+      <button class="btn btn-sm btn-danger" onclick="removePlayer(${p.id})">&#10005;</button>
+    </div>`).join('');
+}
+
+function renderPresent(){
+  const el=document.getElementById('present-list');
+  if(!state.players.length){el.innerHTML='<div class="empty">Add players in Roster first.</div>';return;}
+  el.innerHTML=state.players.map((p,i)=>{
+    const[sbg,stc]=skillColor(p.skill);
+    return `<div class="player-row">
+      <input type="checkbox" class="present-toggle" ${p.present?'checked':''} onchange="togglePresent(${p.id},this.checked)" />
+      ${avatarHTML(p.name,i)}
+      <span style="flex:1;font-size:14px;">${p.name}</span>
+      <span class="skill-badge" style="background:${sbg};color:${stc};">${p.skill}</span>
+    </div>`;}).join('');
+}
+
+function generateTeams(){
+  const present=state.players.filter(p=>p.present);
+  if(present.length<2){document.getElementById('teams-output').innerHTML='<div class="empty">Need at least 2 present players.</div>';return;}
+  const shuffled=[...present].sort(()=>Math.random()-0.5).sort((a,b)=>b.skill-a.skill);
+  let ninja=[],mamie=[],ns=0,ms=0;
+  for(const p of shuffled){if(ns<=ms){ninja.push(p);ns+=p.skill;}else{mamie.push(p);ms+=p.skill;}}
+  state.currentNinja=ninja.map(p=>p.id);
+  state.currentMamie=mamie.map(p=>p.id);
+  state.publishedNinja=state.currentNinja;
+  state.publishedMamie=state.currentMamie;
+
+  function tCol(players,hdrClass,label){
+    return `<div style="flex:1;">
+      <div class="${hdrClass}">${label}</div>
+      ${players.map(p=>{
+        const i=state.players.findIndex(r=>r.id===p.id);
+        const[sbg,stc]=skillColor(p.skill);
+        return `<div class="player-row">
+          ${avatarHTML(p.name,i,28)}
+          <span style="flex:1;font-size:13px;">${p.name}</span>
+          <span class="skill-badge" style="font-size:11px;background:${sbg};color:${stc};">${p.skill}</span>
+        </div>`;}).join('')}
+    </div>`;
+  }
+  document.getElementById('teams-output').innerHTML=`<div style="display:flex;gap:12px;">${tCol(ninja,'ninja-hdr','Ninja Warrior')}${tCol(mamie,'mamie-hdr','Les mamies en bikini')}</div>`;
+  document.getElementById('team-summary').style.display='block';
+  document.getElementById('ninja-avg').textContent=(ns/ninja.length).toFixed(1);
+  document.getElementById('mamie-avg').textContent=(ms/mamie.length).toFixed(1);
+  save();
+}
+
+function renderRecordForm(){
+  const has=state.currentNinja.length>0;
+  document.getElementById('no-teams-msg').style.display=has?'none':'block';
+  document.getElementById('record-form').style.display=has?'block':'none';
+  selectedWinner=null;
+  ['ninja','mamie','draw'].forEach(w=>{document.getElementById('win-'+w).className='win-btn';});
+  document.getElementById('score-ninja').value='';
+  document.getElementById('score-mamie').value='';
+}
+
+function selectWinner(w){
+  selectedWinner=w;
+  document.getElementById('win-ninja').className='win-btn'+(w==='ninja'?' sel-ninja':'');
+  document.getElementById('win-mamie').className='win-btn'+(w==='mamie'?' sel-mamie':'');
+  document.getElementById('win-draw').className='win-btn'+(w==='draw'?' sel-draw':'');
+}
+
+function recordGame(){
+  if(!selectedWinner){alert('Select a winner first.');return;}
+  const sn=document.getElementById('score-ninja').value;
+  const sm=document.getElementById('score-mamie').value;
+  state.games.unshift({
+    id:Date.now(),
+    date:new Date().toLocaleDateString('en-CA'),
+    ninja:[...state.currentNinja],
+    mamie:[...state.currentMamie],
+    winner:selectedWinner,
+    scores:(sn!==''&&sm!=='')?[parseInt(sn),parseInt(sm)]:null
+  });
+  selectedWinner=null;
+  save();renderRecordForm();renderAdminStats();
+  alert('Game saved!');
+}
+
+function buildStats(){
+  const wins={},gp={};
+  state.players.forEach(p=>{wins[p.id]=0;gp[p.id]=0;});
+  state.games.forEach(g=>{
+    const wt=g.winner==='ninja'?g.ninja:g.winner==='mamie'?g.mamie:[];
+    [...g.ninja,...g.mamie].forEach(id=>{if(gp[id]!==undefined)gp[id]++;});
+    wt.forEach(id=>{if(wins[id]!==undefined)wins[id]++;});
+  });
+  return{wins,gp};
+}
+
+function buildDuos(){
+  const dw={},dg={};
+  state.games.forEach(g=>{
+    const wt=g.winner==='ninja'?g.ninja:g.winner==='mamie'?g.mamie:[];
+    [g.ninja,g.mamie].forEach(team=>{
+      for(let i=0;i<team.length;i++)for(let j=i+1;j<team.length;j++){
+        const k=[team[i],team[j]].sort().join('-');
+        dg[k]=(dg[k]||0)+1;
+        if(wt.includes(team[i])&&wt.includes(team[j]))dw[k]=(dw[k]||0)+1;
+      }
+    });
+  });
+  return Object.keys(dg).map(k=>{
+    const[a,b]=k.split('-').map(Number);
+    const pa=state.players.find(p=>p.id===a),pb=state.players.find(p=>p.id===b);
+    if(!pa||!pb)return null;
+    const g=dg[k],w=dw[k]||0;
+    return{pa,pb,g,w,pct:Math.round(w/g*100)};
+  }).filter(Boolean).sort((a,b)=>b.w-a.w||b.pct-a.pct);
+}
+
+function lbHTML(lb){
+  if(!lb.filter(x=>x.gp>0).length)return '<div class="empty">No games yet.</div>';
+  return lb.filter(x=>x.gp>0).map((x,r)=>{
+    const i=state.players.findIndex(p=>p.id===x.p.id);
+    const pct=x.gp>0?Math.round(x.w/x.gp*100):0;
+    return `<div class="player-row">
+      <span style="font-size:13px;color:var(--color-text-secondary);width:20px;flex-shrink:0;">${r+1}.</span>
+      ${avatarHTML(x.p.name,i,28)}
+      <span style="flex:1;font-size:14px;">${x.p.name}</span>
+      <span style="font-size:12px;color:var(--color-text-secondary);margin-right:8px;">${x.w}W&nbsp;/&nbsp;${x.gp}G</span>
+      <div class="pct-bar-wrap"><div class="pct-bar" style="width:${pct}%;"></div></div>
+      <span style="font-size:12px;font-weight:500;margin-left:6px;min-width:34px;text-align:right;">${pct}%</span>
+    </div>`;
+  }).join('');
+}
+
+function duoHTML(duos){
+  if(!duos.length)return '<div class="empty">No duo stats yet.</div>';
+  return duos.slice(0,10).map(d=>`
+    <div class="duo-row">
+      <span style="font-size:13px;">${d.pa.name} &amp; ${d.pb.name}</span>
+      <span style="font-size:12px;color:var(--color-text-secondary);">${d.w}W&nbsp;/&nbsp;${d.g}G</span>
+      <div class="pct-bar-wrap"><div class="pct-bar" style="width:${d.pct}%;"></div></div>
+      <span style="font-size:12px;font-weight:500;margin-left:6px;min-width:34px;text-align:right;">${d.pct}%</span>
+    </div>`).join('');
+}
+
+function logHTML(){
+  if(!state.games.length)return '<div class="empty">No games yet.</div>';
+  return state.games.map(g=>{
+    const sc=g.scores?`${g.scores[0]}–${g.scores[1]}`:'—';
+    const wl=g.winner==='ninja'?'badge-ninja':g.winner==='mamie'?'badge-mamie':'badge-draw';
+    const wt=g.winner==='ninja'?'Ninja Warrior':g.winner==='mamie'?'Les mamies':'Draw';
+    return `<div class="game-row">
+      <span style="color:var(--color-text-secondary);">${g.date}</span>
+      <span style="font-weight:500;">${sc}</span>
+      <span class="${wl}">${wt}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderPublic(){
+  const ninja=state.publishedNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  const mamie=state.publishedMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  const tc=document.getElementById('pub-teams-content');
+  if(!ninja.length&&!mamie.length){tc.innerHTML='<div class="empty">No teams set for this week yet.</div>';}
+  else{
+    function tCol(players,hdrClass,label){
+      return `<div style="flex:1;">
+        <div class="${hdrClass}">${label}</div>
+        ${players.map(p=>{
+          const i=state.players.findIndex(r=>r.id===p.id);
+          return `<div class="player-row">${avatarHTML(p.name,i,28)}<span style="flex:1;font-size:13px;">${p.name}</span></div>`;
+        }).join('')}
+      </div>`;
+    }
+    tc.innerHTML=`<div style="display:flex;gap:12px;">${tCol(ninja,'ninja-hdr','Ninja Warrior')}${tCol(mamie,'mamie-hdr','Les mamies en bikini')}</div>`;
+  }
+  const{wins,gp}=buildStats();
+  const lb=state.players.map((p,i)=>({p,i,w:wins[p.id]||0,gp:gp[p.id]||0})).sort((a,b)=>b.w-a.w||b.gp-a.gp);
+  document.getElementById('pub-lb-list').innerHTML=lbHTML(lb);
+  document.getElementById('pub-duo-list').innerHTML=duoHTML(buildDuos());
+  document.getElementById('pub-log-list').innerHTML=logHTML();
+  document.getElementById('pub-subtitle').textContent=new Date().toLocaleDateString('en-CA',{weekday:'long',month:'long',day:'numeric'});
+}
+
+function renderAdminStats(){
+  const played=state.games.length;
+  const nw=state.games.filter(g=>g.winner==='ninja').length;
+  const mw=state.games.filter(g=>g.winner==='mamie').length;
+  const dw=state.games.filter(g=>g.winner==='draw').length;
+  document.getElementById('stat-played').textContent=played;
+  document.getElementById('stat-ninja').textContent=nw;
+  document.getElementById('stat-mamie').textContent=mw;
+  document.getElementById('stat-draws').textContent=dw;
+  const{wins,gp}=buildStats();
+  const lb=state.players.map((p,i)=>({p,i,w:wins[p.id]||0,gp:gp[p.id]||0})).sort((a,b)=>b.w-a.w||b.gp-a.gp);
+  document.getElementById('adm-lb-list').innerHTML=lbHTML(lb);
+  document.getElementById('adm-duo-list').innerHTML=duoHTML(buildDuos());
+  document.getElementById('adm-log-list').innerHTML=logHTML();
+}
+
+function renderAdmin(){renderRoster();renderPresent();renderAdminStats();}
+function renderAll(){renderPublic();}
+
+load();
+</script>
