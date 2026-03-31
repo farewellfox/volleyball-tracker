@@ -118,8 +118,10 @@ input[type=number]{width:auto;}
 /* PLAYER ROWS */
 .player-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--r-sm);transition:background .1s;}
 .player-row:hover{background:rgba(0,0,0,.025);}
-.player-row.selectable{cursor:pointer;}
-.player-row.selected{background:rgba(24,95,165,.1);outline:2px solid var(--blue);outline-offset:-2px;}
+.player-row.selectable{cursor:grab;}
+.player-row.selectable:active{cursor:grabbing;}
+.player-row.dragging{opacity:.35;}
+.team-card-body.drag-over{background:rgba(24,95,165,.07);outline:2px dashed var(--blue);outline-offset:-4px;border-radius:0 0 var(--r-sm) var(--r-sm);}
 .player-name{flex:1;font-size:14px;font-weight:500;}
 .player-sub{font-size:11px;color:var(--muted);}
 
@@ -272,12 +274,15 @@ input[type=number]{width:auto;}
   <div class="lock-wrap">
     <div class="lock-icon">🔒</div>
     <div class="lock-title">Admin access</div>
-    <div class="lock-sub">Enter the password to manage roster, teams, and games.</div>
-    <div class="lock-row">
-      <input type="password" id="pw-input" placeholder="Password" style="flex:1;" onkeydown="if(event.key==='Enter')tryLogin()" />
-      <button class="btn btn-primary" onclick="tryLogin()">Sign in</button>
+    <div class="lock-sub">Sign in with your admin account to manage roster, teams, and games.</div>
+    <div style="width:100%;max-width:340px;display:flex;flex-direction:column;gap:8px;">
+      <input type="email" id="pw-email" placeholder="Email" onkeydown="if(event.key==='Enter')document.getElementById('pw-input').focus()" />
+      <div class="lock-row">
+        <input type="password" id="pw-input" placeholder="Password" style="flex:1;" onkeydown="if(event.key==='Enter')tryLogin()" />
+        <button class="btn btn-primary" onclick="tryLogin()">Sign in</button>
+      </div>
     </div>
-    <div id="pw-err" style="color:var(--danger);font-size:13px;display:none;">Incorrect password.</div>
+    <div id="pw-err" style="color:var(--danger);font-size:13px;display:none;max-width:340px;text-align:center;"></div>
     <button class="btn btn-ghost btn-sm" onclick="showPage('public')" style="margin-top:4px;">← Back</button>
   </div>
 </div>
@@ -360,7 +365,7 @@ input[type=number]{width:auto;}
       <button class="btn" onclick="generateTeams()" title="Rebalance">↺ Rebalance</button>
     </div>
     <div id="teams-output"></div>
-    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--blue);margin:-8px 0 8px;display:none;">Click a player to select, then click another to swap.</div>
+    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">↕ Drag players between teams to swap &nbsp;·&nbsp; Drop on empty space to move (works with odd counts)</div>
     <div id="teams-actions" style="display:none;">
       <button class="btn btn-success btn-full" onclick="publishTeams(this)">📣 Publish teams</button>
     </div>
@@ -440,7 +445,6 @@ const SUPABASE_KEY = 'sb_publishable__QcOaH84nhIkOcJpUjkq8A_yLsj7eJL';
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const ADMIN_PW = 'volleyball';
 const K = 32;
 
 // ═══════════════════════════════════════
@@ -453,11 +457,16 @@ let state = {
   games: [],
   duoStats: [],
   eloHistory: [],
-  currentNinja: [],
+  currentNinja: [],  // in-memory (may differ from published)
   currentMamie: [],
+  publishedNinja: [], // what's actually in the DB
+  publishedMamie: [],
 };
-let swapState = null;
+let dragId = null;
+let dragTeam = null;
 let selectedWinner = null;
+let editingGameId = null;
+let openSessions = new Set();
 let eloChart = null;
 let dismissedFlags = JSON.parse(localStorage.getItem('vball-dismissed') || '{}');
 
@@ -540,11 +549,23 @@ function playerIdx(id){ return state.players.findIndex(p=>p.id===id); }
 // INIT
 // ═══════════════════════════════════════
 async function init(){
-  if(sessionStorage.getItem('vball-admin')==='1') isAdmin=true;
+  // Check for an existing Supabase session before rendering anything
+  const { data:{ session } } = await db.auth.getSession();
+  if(session) isAdmin=true;
+
   try{ await loadAll(); }
   catch(e){ console.error(e); toast('Failed to connect to database.','err'); }
   renderPublic();
   if(isAdmin){ showPage('admin'); renderAdmin(); }
+
+  // Keep UI in sync if the session expires or is revoked
+  db.auth.onAuthStateChange((event, session)=>{
+    if(event==='SIGNED_OUT'||!session){
+      isAdmin=false; showPage('public');
+    } else if(event==='SIGNED_IN'&&session){
+      isAdmin=true;
+    }
+  });
 }
 
 async function loadAll(){
@@ -569,7 +590,12 @@ async function loadAll(){
   state.games = games || [];
   state.duoStats = duoStats || [];
   state.eloHistory = eloHistory || [];
-  if(pt){ state.currentNinja = pt.ninja_ids||[]; state.currentMamie = pt.mamie_ids||[]; }
+  if(pt){
+    state.currentNinja   = pt.ninja_ids||[];
+    state.currentMamie   = pt.mamie_ids||[];
+    state.publishedNinja = pt.ninja_ids||[];
+    state.publishedMamie = pt.mamie_ids||[];
+  }
 }
 
 // ═══════════════════════════════════════
@@ -584,25 +610,37 @@ function showPage(p){
 function showAdminLogin(){
   if(isAdmin){ showPage('admin'); renderAdmin(); return; }
   showPage('login');
-  document.getElementById('pw-err').style.display='none';
+  const errEl=document.getElementById('pw-err');
+  errEl.style.display='none'; errEl.textContent='';
+  document.getElementById('pw-email').value='';
   document.getElementById('pw-input').value='';
-  setTimeout(()=>document.getElementById('pw-input').focus(),100);
+  setTimeout(()=>document.getElementById('pw-email').focus(),100);
 }
 
-function tryLogin(){
-  const pw=document.getElementById('pw-input').value;
-  if(pw===ADMIN_PW){
-    isAdmin=true; sessionStorage.setItem('vball-admin','1');
-    showPage('admin'); renderAdmin();
-  } else {
-    document.getElementById('pw-err').style.display='block';
+async function tryLogin(){
+  const email=document.getElementById('pw-email').value.trim();
+  const password=document.getElementById('pw-input').value;
+  const errEl=document.getElementById('pw-err');
+  errEl.style.display='none'; errEl.textContent='';
+  if(!email||!password){ errEl.textContent='Enter your email and password.'; errEl.style.display='block'; return; }
+  const btn=document.querySelector('#page-login .btn-primary');
+  setLoading(btn,true);
+  const {error}=await db.auth.signInWithPassword({email,password});
+  setLoading(btn,false);
+  if(error){
+    errEl.textContent=error.message;
+    errEl.style.display='block';
     document.getElementById('pw-input').value='';
     document.getElementById('pw-input').focus();
+    return;
   }
+  isAdmin=true;
+  showPage('admin'); renderAdmin();
 }
 
-function logout(){
-  isAdmin=false; sessionStorage.removeItem('vball-admin'); showPage('public');
+async function logout(){
+  await db.auth.signOut();
+  isAdmin=false; showPage('public');
 }
 
 function pubTab(t, btn){
@@ -638,41 +676,45 @@ function renderPublic(){
 
 function renderPubTeams(){
   const el = document.getElementById('pub-teams');
-  const ninja = state.currentNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  const mamie = state.currentMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  const ninja = state.publishedNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  const mamie = state.publishedMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   if(!ninja.length && !mamie.length){
     el.innerHTML='<div class="empty">No teams published for this week yet.</div>'; return;
   }
-  el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja')}${teamCardHTML(mamie,'mamie')}</div>`;
+  el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',false,false)}${teamCardHTML(mamie,'mamie',false,false)}</div>`;
 }
 
-function teamCardHTML(players, team, swappable=false){
+function teamCardHTML(players, team, swappable=false, showStats=true){
   const label = team==='ninja'?'🥷 Ninja Warrior':'💅 Les mamies en bikini';
+  const bodyDrop = swappable
+    ? `ondragover="onDragOverTeam(event)" ondragleave="onDragLeaveTeam(event)" ondrop="onDropOnTeam(event,'${team}')"`
+    : '';
   const rows = players.map(p=>{
     const idx = playerIdx(p.id);
     const gc = playerGameCount(p.id);
     const cs = compositeScore(p,gc);
-    const isSel = swappable && swapState && swapState.id===p.id && swapState.team===team;
-    const rowCls = swappable ? 'selectable'+(isSel?' selected':'') : '';
-    const onclick = swappable ? `onclick="clickSwap(${p.id},'${team}')"` : '';
-    return `<div class="player-row ${rowCls}" ${onclick}>
+    const dragAttrs = swappable
+      ? `draggable="true" ondragstart="onDragStart(event,${p.id},'${team}')" ondragend="onDragEnd(event)" ondragover="event.preventDefault();event.stopPropagation()" ondrop="onDropOnPlayer(event,${p.id},'${team}')"`
+      : '';
+    return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs}>
       ${avatarHTML(p.name,idx,28)}
       <div style="flex:1;">
         <div style="font-size:13px;font-weight:500;">${p.name}</div>
-        <div class="player-sub">Elo ${p.elo_rating||1000} · sk ${p.skill} · cs ${cs.toFixed(2)}</div>
+        ${showStats?`<div class="player-sub">Elo ${p.elo_rating||1000} · sk ${p.skill} · cs ${cs.toFixed(2)}</div>`:''}
       </div>
-      ${skillBadge(p.skill)}
+      ${showStats?skillBadge(p.skill):''}
     </div>`;
   }).join('');
   const avgElo = players.length ? Math.round(players.reduce((s,p)=>s+(p.elo_rating||1000),0)/players.length) : '—';
   const avgCs = players.length ? (players.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/players.length).toFixed(2) : '—';
+  const footer = showStats ? `<div class="team-card-footer">
+    <span>Avg Elo <strong style="font-family:'DM Mono',monospace;">${avgElo}</strong></span>
+    <span>Avg cs <strong style="font-family:'DM Mono',monospace;">${avgCs}</strong></span>
+  </div>` : '';
   return `<div class="team-card">
     <div class="team-banner team-banner-${team}">${label}</div>
-    <div class="team-card-body">${rows}</div>
-    <div class="team-card-footer">
-      <span>Avg Elo <strong style="font-family:'DM Mono',monospace;">${avgElo}</strong></span>
-      <span>Avg cs <strong style="font-family:'DM Mono',monospace;">${avgCs}</strong></span>
-    </div>
+    <div class="team-card-body" ${bodyDrop}>${rows}</div>
+    ${footer}
   </div>`;
 }
 
@@ -958,14 +1000,19 @@ function renderSessions(){
       ${sg.length?sg.map(g=>miniGameRow(g)).join(''):'<div class="empty" style="padding:8px 0;">No games yet.</div>'}
     </div>`;
   }).join('');
+  // Restore open sessions after re-render
+  openSessions.forEach(id=>{ const el=document.getElementById('sg-'+id); if(el) el.style.display='block'; });
 }
 
 function toggleSess(id){
   const el=document.getElementById('sg-'+id);
-  if(el) el.style.display=el.style.display==='none'?'block':'none';
+  if(!el) return;
+  if(el.style.display==='none'){ el.style.display='block'; openSessions.add(id); }
+  else { el.style.display='none'; openSessions.delete(id); }
 }
 
 function miniGameRow(g){
+  if(editingGameId===g.id) return miniGameEditRow(g);
   const score=(g.score_ninja!=null&&g.score_mamie!=null)?`${g.score_ninja}–${g.score_mamie}`:'—';
   const badge=g.winner==='ninja'?'<span class="badge badge-ninja">Ninja</span>'
     :g.winner==='mamie'?'<span class="badge badge-mamie">Mamie</span>'
@@ -974,7 +1021,89 @@ function miniGameRow(g){
     <span class="game-date">${fmtShort(g.created_at)}</span>
     <span class="game-score" style="font-size:13px;">${score}</span>
     ${badge}
+    <div style="display:flex;gap:4px;flex-shrink:0;">
+      <button class="btn btn-xs" onclick="editGame(${g.id})" title="Edit">✏️</button>
+      <button class="btn btn-xs btn-danger" onclick="deleteGame(${g.id})" title="Delete">✕</button>
+    </div>
   </div>`;
+}
+
+function miniGameEditRow(g){
+  const sn=g.score_ninja!=null?g.score_ninja:'';
+  const sm=g.score_mamie!=null?g.score_mamie:'';
+  const chk=v=>`style="accent-color:var(--blue);width:15px;height:15px;cursor:pointer;"`;
+  return `<div style="padding:12px 0;border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+      <input type="number" id="eg-sn-${g.id}" value="${sn}" placeholder="0" min="0"
+        style="width:58px;text-align:center;font-size:20px;font-weight:700;font-family:'DM Mono',monospace;padding:6px;border:1px solid var(--border);border-radius:var(--r-xs);" />
+      <span style="color:var(--muted);font-size:16px;">–</span>
+      <input type="number" id="eg-sm-${g.id}" value="${sm}" placeholder="0" min="0"
+        style="width:58px;text-align:center;font-size:20px;font-weight:700;font-family:'DM Mono',monospace;padding:6px;border:1px solid var(--border);border-radius:var(--r-xs);" />
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:10px;font-size:13px;">
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="radio" name="eg-w-${g.id}" value="ninja" ${g.winner==='ninja'?'checked':''} ${chk()}> Ninja
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="radio" name="eg-w-${g.id}" value="mamie" ${g.winner==='mamie'?'checked':''} ${chk()}> Mamie
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="radio" name="eg-w-${g.id}" value="draw" ${g.winner==='draw'?'checked':''} ${chk()}> Draw
+      </label>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-primary btn-xs" id="eg-save-${g.id}" onclick="saveGameEdit(${g.id})">Save</button>
+      <button class="btn btn-xs" onclick="cancelEditGame()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function editGame(id){
+  editingGameId=id;
+  const game=state.games.find(g=>g.id===id);
+  if(game) openSessions.add(game.session_id);
+  renderSessions();
+}
+
+function cancelEditGame(){
+  editingGameId=null;
+  renderSessions();
+}
+
+async function saveGameEdit(id){
+  const sn=document.getElementById('eg-sn-'+id).value;
+  const sm=document.getElementById('eg-sm-'+id).value;
+  const winner=document.querySelector(`input[name="eg-w-${id}"]:checked`)?.value;
+  if(!winner){ toast('Select a winner.','err'); return; }
+  const btn=document.getElementById('eg-save-'+id);
+  setLoading(btn,true);
+  const {error}=await db.from('games').update({
+    score_ninja:sn!==''?parseInt(sn):null,
+    score_mamie:sm!==''?parseInt(sm):null,
+    winner,
+  }).eq('id',id);
+  setLoading(btn,false);
+  if(error){ toast('Failed to save.','err'); console.error(error); return; }
+  const g=state.games.find(x=>x.id===id);
+  if(g){ g.score_ninja=sn!==''?parseInt(sn):null; g.score_mamie=sm!==''?parseInt(sm):null; g.winner=winner; }
+  editingGameId=null;
+  renderSessions();
+  toast('Game updated.');
+}
+
+async function deleteGame(id){
+  if(!confirm('Delete this game? Elo ratings will not be recalculated.')) return;
+  const game=state.games.find(g=>g.id===id);
+  const {error}=await db.from('games').delete().eq('id',id);
+  if(error){ toast('Failed to delete.','err'); console.error(error); return; }
+  await db.from('elo_history').delete().eq('game_id',id);
+  state.games=state.games.filter(g=>g.id!==id);
+  state.eloHistory=state.eloHistory.filter(h=>h.game_id!==id);
+  if(editingGameId===id) editingGameId=null;
+  // Keep session open after delete
+  if(game) openSessions.add(game.session_id);
+  renderSessions();
+  toast('Game deleted.');
 }
 
 // ═══════════════════════════════════════
@@ -1024,7 +1153,7 @@ function generateTeams(){
   }
   state.currentNinja=ninja.map(p=>p.id);
   state.currentMamie=mamie.map(p=>p.id);
-  swapState=null;
+  dragId=null; dragTeam=null;
   renderTeamsOutput();
   document.getElementById('teams-actions').style.display='block';
 }
@@ -1032,34 +1161,67 @@ function generateTeams(){
 function renderTeamsOutput(){
   const el=document.getElementById('teams-output');
   const hint=document.getElementById('teams-hint');
-  if(!state.currentNinja.length&&!state.currentMamie.length){ el.innerHTML=''; return; }
+  if(!state.currentNinja.length&&!state.currentMamie.length){ el.innerHTML=''; hint.style.display='none'; return; }
   const ninja=state.currentNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamie=state.currentMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',true)}${teamCardHTML(mamie,'mamie',true)}</div>`;
-  hint.style.display=swapState?'block':'none';
+  el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',true,true)}${teamCardHTML(mamie,'mamie',true,true)}</div>`;
+  hint.style.display='block';
 }
 
-function clickSwap(id, team){
-  if(!swapState){ swapState={id,team}; renderTeamsOutput(); return; }
-  if(swapState.id===id&&swapState.team===team){ swapState=null; renderTeamsOutput(); return; }
-  if(swapState.team!==team){
-    const srcTeam=swapState.team==='ninja'?state.currentNinja:state.currentMamie;
-    const dstTeam=team==='ninja'?state.currentNinja:state.currentMamie;
-    const si=srcTeam.indexOf(swapState.id);
-    const di=dstTeam.indexOf(id);
-    if(si!==-1&&di!==-1){ srcTeam[si]=id; dstTeam[di]=swapState.id; }
+// ─── drag-and-drop ───────────────────────────────────────
+function onDragStart(e, id, team){
+  dragId=id; dragTeam=team;
+  e.dataTransfer.effectAllowed='move';
+  e.currentTarget.classList.add('dragging');
+}
+function onDragEnd(e){
+  e.currentTarget.classList.remove('dragging');
+  dragId=null; dragTeam=null;
+}
+function onDragOverTeam(e){
+  e.preventDefault();
+  e.currentTarget.classList.add('drag-over');
+}
+function onDragLeaveTeam(e){
+  e.currentTarget.classList.remove('drag-over');
+}
+// Drop ON a specific player → swap (cross-team) or no-op (same-team)
+function onDropOnPlayer(e, targetId, targetTeam){
+  e.preventDefault(); e.stopPropagation();
+  if(dragId===null) return;
+  if(dragTeam!==targetTeam){
+    const src=dragTeam==='ninja'?state.currentNinja:state.currentMamie;
+    const dst=targetTeam==='ninja'?state.currentNinja:state.currentMamie;
+    const si=src.indexOf(dragId), di=dst.indexOf(targetId);
+    if(si!==-1&&di!==-1){ src[si]=targetId; dst[di]=dragId; }
   }
-  swapState=null; renderTeamsOutput();
+  dragId=null; dragTeam=null;
+  renderTeamsOutput();
+}
+// Drop on empty team area → MOVE player (works with odd counts)
+function onDropOnTeam(e, targetTeam){
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if(dragId===null||dragTeam===targetTeam){ dragId=null; dragTeam=null; return; }
+  const src=dragTeam==='ninja'?state.currentNinja:state.currentMamie;
+  const dst=targetTeam==='ninja'?state.currentNinja:state.currentMamie;
+  const si=src.indexOf(dragId);
+  if(si!==-1){ src.splice(si,1); dst.push(dragId); }
+  dragId=null; dragTeam=null;
+  renderTeamsOutput();
 }
 
 async function publishTeams(btn){
   setLoading(btn,true);
-  const {error}=await db.from('published_teams').upsert({
-    id:1, ninja_ids:state.currentNinja, mamie_ids:state.currentMamie,
-    updated_at:new Date().toISOString()
-  });
+  // spec says row id=1 always exists → use update()
+  const {error}=await db.from('published_teams')
+    .update({ninja_ids:state.currentNinja, mamie_ids:state.currentMamie})
+    .eq('id',1);
   setLoading(btn,false);
   if(error){ toast('Failed to publish teams.','err'); console.error(error); return; }
+  // Mirror to published state so public view updates immediately
+  state.publishedNinja=[...state.currentNinja];
+  state.publishedMamie=[...state.currentMamie];
   toast('Teams published! 🎉');
 }
 
@@ -1078,7 +1240,7 @@ function renderRecordTab(){
     const ninja=state.currentNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
     const mamie=state.currentMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
     document.getElementById('record-teams-preview').innerHTML=
-      `<div class="teams-wrap" style="margin-bottom:8px;">${teamCardHTML(ninja,'ninja')}${teamCardHTML(mamie,'mamie')}</div>`;
+      `<div class="teams-wrap" style="margin-bottom:8px;">${teamCardHTML(ninja,'ninja',false,false)}${teamCardHTML(mamie,'mamie',false,false)}</div>`;
   }
   selectedWinner=null;
   ['ninja','mamie','draw'].forEach(w=>document.getElementById('win-'+w).className='win-btn');
