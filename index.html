@@ -122,6 +122,10 @@ input[type=number]{width:auto;}
 .player-row.selectable:active{cursor:grabbing;}
 .player-row.dragging{opacity:.35;}
 .team-card-body.drag-over{background:rgba(24,95,165,.07);outline:2px dashed var(--blue);outline-offset:-4px;border-radius:0 0 var(--r-sm) var(--r-sm);}
+.player-row.drop-above{border-top:2px solid var(--blue);}
+.player-row.drop-below{border-bottom:2px solid var(--blue);}
+.drag-handle{color:var(--border);font-size:16px;cursor:grab;user-select:none;flex-shrink:0;line-height:1;padding-right:2px;}
+.player-row.selectable:active .drag-handle{cursor:grabbing;}
 .player-name{flex:1;font-size:14px;font-weight:500;}
 .player-sub{font-size:11px;color:var(--muted);}
 
@@ -365,7 +369,7 @@ input[type=number]{width:auto;}
       <button class="btn" onclick="generateTeams()" title="Rebalance">↺ Rebalance</button>
     </div>
     <div id="teams-output"></div>
-    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">↕ Drag players between teams to swap &nbsp;·&nbsp; Drop on empty space to move (works with odd counts)</div>
+    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">⠿ Drag to reorder within a team &nbsp;·&nbsp; Drag across to move between teams</div>
     <div id="teams-actions" style="display:none;">
       <button class="btn btn-success btn-full" onclick="publishTeams(this)">📣 Publish teams</button>
     </div>
@@ -464,6 +468,8 @@ let state = {
 };
 let dragId = null;
 let dragTeam = null;
+let dragOverPlayerId = null;
+let dragHalf = 'bottom';
 let selectedWinner = null;
 let editingGameId = null;
 let openSessions = new Set();
@@ -694,9 +700,10 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
     const gc = playerGameCount(p.id);
     const cs = compositeScore(p,gc);
     const dragAttrs = swappable
-      ? `draggable="true" ondragstart="onDragStart(event,${p.id},'${team}')" ondragend="onDragEnd(event)" ondragover="event.preventDefault();event.stopPropagation()" ondrop="onDropOnPlayer(event,${p.id},'${team}')"`
+      ? `draggable="true" ondragstart="onDragStart(event,${p.id},'${team}')" ondragend="onDragEnd(event)" ondragover="onDragOverPlayer(event,${p.id},'${team}')" ondragleave="onDragLeavePlayer(event,${p.id})" ondrop="onDropOnPlayer(event,${p.id},'${team}')"`
       : '';
     return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs}>
+      ${swappable?'<span class="drag-handle">⠿</span>':''}
       ${avatarHTML(p.name,idx,28)}
       <div style="flex:1;">
         <div style="font-size:13px;font-weight:500;">${p.name}</div>
@@ -1075,6 +1082,8 @@ async function saveGameEdit(id){
   const sm=document.getElementById('eg-sm-'+id).value;
   const winner=document.querySelector(`input[name="eg-w-${id}"]:checked`)?.value;
   if(!winner){ toast('Select a winner.','err'); return; }
+  const existingGame=state.games.find(x=>x.id===id);
+  const outcomeChanged=existingGame&&existingGame.winner!==winner;
   const btn=document.getElementById('eg-save-'+id);
   setLoading(btn,true);
   const {error}=await db.from('games').update({
@@ -1082,26 +1091,24 @@ async function saveGameEdit(id){
     score_mamie:sm!==''?parseInt(sm):null,
     winner,
   }).eq('id',id);
+  if(error){ setLoading(btn,false); toast('Failed to save.','err'); console.error(error); return; }
+  if(existingGame){ existingGame.score_ninja=sn!==''?parseInt(sn):null; existingGame.score_mamie=sm!==''?parseInt(sm):null; existingGame.winner=winner; }
+  if(outcomeChanged) await recalculateAllElo();
   setLoading(btn,false);
-  if(error){ toast('Failed to save.','err'); console.error(error); return; }
-  const g=state.games.find(x=>x.id===id);
-  if(g){ g.score_ninja=sn!==''?parseInt(sn):null; g.score_mamie=sm!==''?parseInt(sm):null; g.winner=winner; }
   editingGameId=null;
   renderSessions();
-  toast('Game updated.');
+  toast(outcomeChanged?'Game updated. Elo recalculated.':'Game updated.');
 }
 
 async function deleteGame(id){
-  if(!confirm('Delete this game? Elo ratings will not be recalculated.')) return;
+  if(!confirm('Delete this game? Elo ratings will be recalculated.')) return;
   const game=state.games.find(g=>g.id===id);
   const {error}=await db.from('games').delete().eq('id',id);
   if(error){ toast('Failed to delete.','err'); console.error(error); return; }
-  await db.from('elo_history').delete().eq('game_id',id);
   state.games=state.games.filter(g=>g.id!==id);
-  state.eloHistory=state.eloHistory.filter(h=>h.game_id!==id);
   if(editingGameId===id) editingGameId=null;
-  // Keep session open after delete
   if(game) openSessions.add(game.session_id);
+  await recalculateAllElo();
   renderSessions();
   toast('Game deleted.');
 }
@@ -1169,6 +1176,13 @@ function renderTeamsOutput(){
 }
 
 // ─── drag-and-drop ───────────────────────────────────────
+function clearPlayerDropIndicator(){
+  if(dragOverPlayerId!==null){
+    document.querySelectorAll('.player-row').forEach(r=>r.classList.remove('drop-above','drop-below'));
+    dragOverPlayerId=null;
+  }
+}
+
 function onDragStart(e, id, team){
   dragId=id; dragTeam=team;
   e.dataTransfer.effectAllowed='move';
@@ -1176,33 +1190,65 @@ function onDragStart(e, id, team){
 }
 function onDragEnd(e){
   e.currentTarget.classList.remove('dragging');
+  clearPlayerDropIndicator();
+  document.querySelectorAll('.team-card-body').forEach(b=>b.classList.remove('drag-over'));
   dragId=null; dragTeam=null;
 }
 function onDragOverTeam(e){
   e.preventDefault();
+  clearPlayerDropIndicator();
   e.currentTarget.classList.add('drag-over');
 }
 function onDragLeaveTeam(e){
-  e.currentTarget.classList.remove('drag-over');
+  // Only remove highlight when truly leaving the container, not crossing into a child
+  if(!e.currentTarget.contains(e.relatedTarget)){
+    e.currentTarget.classList.remove('drag-over');
+  }
 }
-// Drop ON a specific player → swap (cross-team) or no-op (same-team)
+// Dragover on a specific player → show insertion indicator
+function onDragOverPlayer(e, id, team){
+  e.preventDefault(); e.stopPropagation();
+  if(dragId===null||dragId===id) return;
+  document.querySelectorAll('.team-card-body').forEach(b=>b.classList.remove('drag-over'));
+  const rect=e.currentTarget.getBoundingClientRect();
+  const half=e.clientY<rect.top+rect.height/2?'top':'bottom';
+  if(dragOverPlayerId!==id||dragHalf!==half){
+    clearPlayerDropIndicator();
+    dragOverPlayerId=id; dragHalf=half;
+    e.currentTarget.classList.add(half==='top'?'drop-above':'drop-below');
+  }
+}
+function onDragLeavePlayer(e, id){
+  if(!e.currentTarget.contains(e.relatedTarget)){
+    e.currentTarget.classList.remove('drop-above','drop-below');
+    if(dragOverPlayerId===id) dragOverPlayerId=null;
+  }
+}
+// Drop ON a specific player → insert at position (works same-team and cross-team)
 function onDropOnPlayer(e, targetId, targetTeam){
   e.preventDefault(); e.stopPropagation();
-  if(dragId===null) return;
-  if(dragTeam!==targetTeam){
-    const src=dragTeam==='ninja'?state.currentNinja:state.currentMamie;
-    const dst=targetTeam==='ninja'?state.currentNinja:state.currentMamie;
-    const si=src.indexOf(dragId), di=dst.indexOf(targetId);
-    if(si!==-1&&di!==-1){ src[si]=targetId; dst[di]=dragId; }
-  }
+  clearPlayerDropIndicator();
+  document.querySelectorAll('.team-card-body').forEach(b=>b.classList.remove('drag-over'));
+  if(dragId===null||dragId===targetId){ dragId=null; dragTeam=null; return; }
+  const src=dragTeam==='ninja'?state.currentNinja:state.currentMamie;
+  const dst=targetTeam==='ninja'?state.currentNinja:state.currentMamie;
+  const si=src.indexOf(dragId);
+  if(si===-1){ dragId=null; dragTeam=null; return; }
+  // Remove dragged player from source
+  src.splice(si,1);
+  // Find target position in dst (may have shifted if same array)
+  const di=dst.indexOf(targetId);
+  if(di===-1){ dst.push(dragId); }
+  else{ dst.splice(dragHalf==='top'?di:di+1,0,dragId); }
   dragId=null; dragTeam=null;
   renderTeamsOutput();
 }
-// Drop on empty team area → MOVE player (works with odd counts)
+// Drop on empty team area → append to end of target team
 function onDropOnTeam(e, targetTeam){
   e.preventDefault();
   e.currentTarget.classList.remove('drag-over');
-  if(dragId===null||dragTeam===targetTeam){ dragId=null; dragTeam=null; return; }
+  clearPlayerDropIndicator();
+  if(dragId===null){ return; }
   const src=dragTeam==='ninja'?state.currentNinja:state.currentMamie;
   const dst=targetTeam==='ninja'?state.currentNinja:state.currentMamie;
   const si=src.indexOf(dragId);
@@ -1329,6 +1375,65 @@ async function applyEloChanges(game){
   for(const u of updates){
     await db.from('players').update({elo_rating:u.elo_rating}).eq('id',u.id);
   }
+}
+
+async function recalculateAllElo(){
+  // Reset all player ELOs to 1000 in memory
+  for(const p of state.players) p.elo_rating=1000;
+
+  // Replay games in chronological order
+  const sortedGames=[...state.games].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+
+  // Track cumulative game count per player (mirrors original recording behaviour)
+  const gcMap={};
+  state.players.forEach(p=>gcMap[p.id]=0);
+
+  const allHistRows=[];
+
+  for(const game of sortedGames){
+    const ninjaIds=game.ninja_ids||[];
+    const mamieIds=game.mamie_ids||[];
+    [...ninjaIds,...mamieIds].forEach(id=>{ if(gcMap[id]!==undefined) gcMap[id]++; });
+    const ninjas=ninjaIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+    const mamies=mamieIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+    if(!ninjas.length||!mamies.length) continue;
+
+    const nAvgCs=ninjas.reduce((s,p)=>s+compositeScore(p,gcMap[p.id]||1),0)/ninjas.length;
+    const mAvgCs=mamies.reduce((s,p)=>s+compositeScore(p,gcMap[p.id]||1),0)/mamies.length;
+    const nExp=eloExpected(nAvgCs*1000,mAvgCs*1000);
+    const mExp=1-nExp;
+    const nActual=game.winner==='ninja'?1:game.winner==='draw'?0.5:0;
+    const mActual=1-nActual;
+    const nAvgSk=ninjas.reduce((s,p)=>s+(p.skill||5),0)/ninjas.length;
+    const mAvgSk=mamies.reduce((s,p)=>s+(p.skill||5),0)/mamies.length;
+
+    const proc=(players,actual,expected,teamAvgSk)=>{
+      for(const p of players){
+        const lp=state.players.find(x=>x.id===p.id);
+        const before=(lp?lp.elo_rating:null)||1000;
+        const adj=1-0.4*Math.max(0,(teamAvgSk-(p.skill||5))/10);
+        const change=Math.round(K*(actual-expected)*adj);
+        const after=before+change;
+        allHistRows.push({game_id:game.id,player_id:p.id,rating_before:before,rating_after:after,change});
+        if(lp) lp.elo_rating=after;
+      }
+    };
+    proc(ninjas,nActual,nExp,nAvgSk);
+    proc(mamies,mActual,mExp,mAvgSk);
+  }
+
+  // Rebuild elo_history table
+  await db.from('elo_history').delete().not('id','is',null);
+  if(allHistRows.length) await db.from('elo_history').insert(allHistRows);
+
+  // Persist updated ELOs
+  for(const p of state.players){
+    await db.from('players').update({elo_rating:p.elo_rating}).eq('id',p.id);
+  }
+
+  // Refresh local elo_history
+  const {data:hist}=await db.from('elo_history').select('*').order('id');
+  state.eloHistory=hist||[];
 }
 
 async function updateDuoStats(game){
