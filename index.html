@@ -252,6 +252,14 @@ input[type=number]{width:auto;}
 .pred-seg-mamie{background:var(--pink);display:flex;align-items:center;justify-content:flex-end;padding:0 10px;font-size:13px;font-weight:700;color:#fff;}
 .pred-labels{display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;}
 
+/* CONTEXT MENU */
+#ctx-menu{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);box-shadow:var(--shadow-md);min-width:200px;max-width:280px;overflow:hidden;padding:4px 0;}
+.ctx-header{padding:8px 14px;font-weight:600;font-size:13px;border-bottom:1px solid var(--border);}
+.ctx-section-label{padding:6px 14px 2px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+.ctx-item{padding:8px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background .1s;}
+.ctx-item:hover{background:rgba(0,0,0,.04);}
+.ctx-divider{height:1px;background:var(--border);margin:4px 0;}
+
 /* MOBILE */
 @media(max-width:480px){
   .metrics-4{grid-template-columns:repeat(2,1fr);}
@@ -365,27 +373,37 @@ input[type=number]{width:auto;}
         </div>
       </div>
     </div>
-    <div class="sec-title">Past sessions</div>
-    <div class="card" style="padding:8px 16px;">
-      <div id="sessions-list"></div>
-    </div>
+    <div id="sessions-list"></div>
   </div>
 
   <!-- TEAMS -->
+  <!-- SQL migration: ALTER TABLE published_teams ADD COLUMN IF NOT EXISTS session_id bigint references sessions(id); -->
   <div id="adm-teams" class="section">
-    <div class="sec-title">Who's playing?</div>
+    <div class="card" style="margin-bottom:8px;padding:12px 16px;">
+      <label class="form-label">Session</label>
+      <select id="teams-sess-sel" style="width:100%;" onchange="state.teamsSession=this.value;updatePublishBtn()">
+        <option value="">Select a session...</option>
+      </select>
+    </div>
+    <div class="sec-title" style="margin-top:16px;">Who's playing?</div>
     <div class="card" style="padding:8px;">
       <div id="present-list"></div>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:24px;">
-      <button class="btn btn-primary" style="flex:1;" onclick="generateTeams()">⚡ Generate teams</button>
-      <button class="btn" onclick="generateTeams()" title="Rebalance">↺ Rebalance</button>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+      <button class="btn btn-primary" style="flex:1;" onclick="generateBalanced()">⚖️ Balanced</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="generateRandom()">🎲 Random</button>
+      <button class="btn" onclick="rebalanceTeams()" title="Rebalance (keeps rules)">↺</button>
+    </div>
+    <div id="affinity-warning" style="display:none;background:#FFF8E1;border:1px solid #FFD54F;border-radius:var(--r-sm);padding:10px 14px;font-size:13px;margin-bottom:12px;align-items:center;gap:8px;">
+      <span style="flex:1;">⚠ Some affinity rules could not be satisfied and were skipped.</span>
+      <button class="btn btn-xs" onclick="document.getElementById('affinity-warning').style.display='none'">✕</button>
     </div>
     <div id="teams-output"></div>
-    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">⠿ Drag to reorder within a team &nbsp;·&nbsp; Drag across to move between teams</div>
-    <div id="pred-card" style="margin-top:16px;display:none;"></div>
-    <div id="teams-actions" style="display:none;">
-      <button class="btn btn-success btn-full" onclick="publishTeams(this)">📣 Publish teams</button>
+    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">⠿ Drag players &nbsp;·&nbsp; Right-click for options</div>
+    <div id="active-rules" style="display:none;margin-bottom:12px;"></div>
+    <div id="pred-card" style="display:none;margin-top:4px;"></div>
+    <div id="teams-actions" style="display:none;margin-top:12px;">
+      <button class="btn btn-success btn-full" id="publish-teams-btn" onclick="publishTeams(this)">📣 Publish teams</button>
     </div>
   </div>
 
@@ -402,7 +420,7 @@ input[type=number]{width:auto;}
       <div class="card">
         <div class="metrics-2" style="margin-bottom:0;">
           <div>
-            <div class="score-label" style="color:var(--blue-dark);">🥷 Ninja Warrior</div>
+            <div class="score-label" style="color:var(--blue-dark);">🥷 Ninja Warriors</div>
             <input type="number" id="score-ninja" class="score-input" placeholder="0" min="0" style="width:100%;" />
           </div>
           <div>
@@ -414,7 +432,7 @@ input[type=number]{width:auto;}
       <div class="card">
         <div class="card-sub">Winner</div>
         <div class="win-btns">
-          <button class="win-btn" id="win-ninja" onclick="selectWinner('ninja')">🥷 Ninja Warrior</button>
+          <button class="win-btn" id="win-ninja" onclick="selectWinner('ninja')">🥷 Ninja Warriors</button>
           <button class="win-btn" id="win-mamie" onclick="selectWinner('mamie')">💅 Les mamies</button>
           <button class="win-btn" id="win-draw" onclick="selectWinner('draw')">🤝 Draw</button>
         </div>
@@ -460,6 +478,8 @@ input[type=number]{width:auto;}
     <button class="btn btn-full" style="margin-top:16px;" onclick="closePlayerModal()">Close</button>
   </div>
 </div>
+<!-- ══ CONTEXT MENU ══ -->
+<div id="ctx-menu" style="display:none;position:fixed;z-index:2000;"></div>
 
 <script>
 // ═══════════════════════════════════════
@@ -487,13 +507,18 @@ let state = {
   currentMamie: [],
   publishedNinja: [], // what's actually in the DB
   publishedMamie: [],
+  publishedSessionId: null,
+  teamsSession: '',
+  affinities: { together: [], apart: [] },
 };
 let dragId = null;
 let dragTeam = null;
 let dragOverPlayerId = null;
 let dragHalf = 'bottom';
+let ctxPlayerId = null;
 let selectedWinner = null;
 let editingGameId = null;
+let editingSessionId = null;
 let openSessions = new Set();
 let eloChart = null;
 let dismissedFlags = JSON.parse(localStorage.getItem('vball-dismissed') || '{}');
@@ -551,6 +576,30 @@ function formatDate(ds){
   if(!ds) return '—';
   const d = new Date(ds+'T12:00:00');
   return d.toLocaleDateString('en-CA',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+}
+
+function formatSessionDate(ds){
+  if(!ds) return '—';
+  const d=new Date(ds+'T12:00:00');
+  const weekday=d.toLocaleDateString('en-CA',{weekday:'long'});
+  const month=d.toLocaleDateString('en-CA',{month:'long'});
+  const day=d.getDate();
+  const sfx=(n)=>{ if(n>=11&&n<=13) return 'th'; switch(n%10){case 1:return 'st';case 2:return 'nd';case 3:return 'rd';default:return 'th';} };
+  return `${weekday}, ${month} ${day}${sfx(day)}`;
+}
+
+function todayStr(){
+  const t=new Date();
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+}
+
+function resolveActiveSession(){
+  if(!state.sessions.length) return null;
+  const td=todayStr();
+  const upcoming=[...state.sessions].filter(s=>s.date>=td).sort((a,b)=>a.date.localeCompare(b.date));
+  if(upcoming.length) return upcoming[0];
+  // state.sessions is ordered desc already
+  return state.sessions[0];
 }
 
 function fmtShort(isoStr){
@@ -622,10 +671,11 @@ async function loadAll(){
   state.eloHistory = eloHistory || [];
   state.h2h = h2h || [];
   if(pt){
-    state.currentNinja   = pt.ninja_ids||[];
-    state.currentMamie   = pt.mamie_ids||[];
-    state.publishedNinja = pt.ninja_ids||[];
-    state.publishedMamie = pt.mamie_ids||[];
+    state.currentNinja       = pt.ninja_ids||[];
+    state.currentMamie       = pt.mamie_ids||[];
+    state.publishedNinja     = pt.ninja_ids||[];
+    state.publishedMamie     = pt.mamie_ids||[];
+    state.publishedSessionId = pt.session_id||null;
   }
 }
 
@@ -697,8 +747,13 @@ function adminTab(t, btn){
 // PUBLIC PAGE
 // ═══════════════════════════════════════
 function renderPublic(){
-  document.getElementById('pub-date').textContent =
-    new Date().toLocaleDateString('en-CA',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const activeSess=resolveActiveSession();
+  const dateEl=document.getElementById('pub-date');
+  if(activeSess){
+    dateEl.innerHTML=`<span class="badge badge-draw" style="font-size:11px;margin-right:6px;">${activeSess.season}</span><span>${formatSessionDate(activeSess.date)}</span>`;
+  } else {
+    dateEl.textContent=new Date().toLocaleDateString('en-CA',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  }
   renderPubTeams();
   renderPubLb();
   renderPubDuos();
@@ -706,17 +761,25 @@ function renderPublic(){
 }
 
 function renderPubTeams(){
-  const el = document.getElementById('pub-teams');
-  const ninja = state.publishedNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  const mamie = state.publishedMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  if(!ninja.length && !mamie.length){
-    el.innerHTML='<div class="empty">No teams published for this week yet.</div>'; return;
+  const el=document.getElementById('pub-teams');
+  const activeSess=resolveActiveSession();
+  if(!activeSess){ el.innerHTML='<div class="empty">No sessions scheduled yet.</div>'; return; }
+  const hasTeams=state.publishedSessionId===activeSess.id&&state.publishedNinja.length>0;
+  if(!hasTeams){
+    el.innerHTML=`<div class="card" style="text-align:center;padding:32px 16px;">
+      <div style="font-size:36px;margin-bottom:12px;">🏐</div>
+      <div style="font-family:'Playfair Display',serif;font-size:17px;font-weight:600;margin-bottom:6px;">Teams haven't been posted yet</div>
+      <div style="font-size:14px;color:var(--muted);">for ${formatSessionDate(activeSess.date)}</div>
+    </div>`;
+    return;
   }
+  const ninja=state.publishedNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  const mamie=state.publishedMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',false,false)}${teamCardHTML(mamie,'mamie',false,false)}</div>`;
 }
 
 function teamCardHTML(players, team, swappable=false, showStats=true){
-  const label = team==='ninja'?'🥷 Ninja Warrior':'💅 Les mamies en bikini';
+  const label = team==='ninja'?'🥷 Ninja Warriors':'💅 Les mamies en bikini';
   const bodyDrop = swappable
     ? `ondragover="onDragOverTeam(event)" ondragleave="onDragLeaveTeam(event)" ondrop="onDropOnTeam(event,'${team}')"`
     : '';
@@ -727,7 +790,11 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
     const dragAttrs = swappable
       ? `draggable="true" ondragstart="onDragStart(event,${p.id},'${team}')" ondragend="onDragEnd(event)" ondragover="onDragOverPlayer(event,${p.id},'${team}')" ondragleave="onDragLeavePlayer(event,${p.id})" ondrop="onDropOnPlayer(event,${p.id},'${team}')"`
       : '';
-    return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs}>
+    const inTogether=swappable&&state.affinities.together.some(([a,b])=>a===p.id||b===p.id);
+    const inApart=swappable&&state.affinities.apart.some(([a,b])=>a===p.id||b===p.id);
+    const afBorder=inTogether&&inApart?'border-left:3px solid var(--gold);':inTogether?'border-left:3px solid var(--success);':inApart?'border-left:3px solid var(--danger);':'';
+    const ctxAttr=swappable?`oncontextmenu="onPlayerRightClick(event,${p.id})"`:'';
+    return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs} ${ctxAttr} style="${afBorder}">
       ${swappable?'<span class="drag-handle">⠿</span>':''}
       ${avatarHTML(p.name,idx,28)}
       <div style="flex:1;">
@@ -1021,21 +1088,108 @@ function renderSessions(){
   document.getElementById('season-list').innerHTML=seasons.map(s=>`<option value="${s}">`).join('');
   const el=document.getElementById('sessions-list');
   if(!state.sessions.length){ el.innerHTML='<div class="empty">No sessions yet.</div>'; return; }
-  el.innerHTML=state.sessions.map(s=>{
+  const td=todayStr();
+  const todaySessions=state.sessions.filter(s=>s.date===td);
+  const upcomingSessions=state.sessions.filter(s=>s.date>td);
+  const pastSessions=state.sessions.filter(s=>s.date<td);
+  // sessions loaded desc so pastSessions is already most-recent-first
+
+  function sessEditRow(s, compact=false){
+    const pad=compact?'padding:10px 0;border-bottom:1px solid var(--border);':'padding:12px 16px;';
+    return `<div style="${pad}display:flex;align-items:center;gap:8px;" id="sess-edit-${s.id}">
+      <input type="date" id="se-date-${s.id}" value="${s.date}"
+        style="font-size:13px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--r-xs);background:var(--bg-card);color:var(--text);flex:1;" />
+      <input type="text" id="se-season-${s.id}" value="${s.season}" placeholder="Season"
+        style="font-size:13px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--r-xs);background:var(--bg-card);color:var(--text);width:110px;" />
+      <button class="btn btn-xs btn-primary" onclick="saveSession(${s.id},this)">Save</button>
+      <button class="btn btn-xs" onclick="cancelEditSession()">✕</button>
+    </div>`;
+  }
+
+  function sessCard(s, style=''){
+    if(editingSessionId===s.id) return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:8px;${style}">${sessEditRow(s)}</div>`;
     const sg=state.games.filter(g=>g.session_id===s.id);
-    return `<div class="sess-row" onclick="toggleSess(${s.id})">
-      <div>
-        <div class="sess-date">${formatDate(s.date)}</div>
-        <div class="sess-tag">${s.season}</div>
+    const teamsPosted=state.publishedSessionId===s.id;
+    const teamsLabel=teamsPosted
+      ?'<span style="font-size:11px;color:var(--success);">✓ Teams posted</span>'
+      :'<span style="font-size:11px;color:var(--muted);">No teams yet</span>';
+    return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:8px;${style}">
+      <div class="sess-row" onclick="toggleSess(${s.id})" style="cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:10px;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+            <span class="badge badge-draw" style="font-size:11px;">${s.season}</span>
+            <span style="font-weight:600;font-size:14px;">${formatSessionDate(s.date)}</span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;">
+            <span style="font-size:12px;color:var(--muted);">${sg.length} game${sg.length!==1?'s':''}</span>
+            ${teamsLabel}
+          </div>
+        </div>
+        <div style="display:flex;gap:4px;" onclick="event.stopPropagation()">
+          <button class="btn btn-xs" onclick="editSession(${s.id})" title="Edit">✏️</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteSession(${s.id})" title="Delete">✕</button>
+        </div>
       </div>
-      <span class="sess-count">${sg.length} game${sg.length!==1?'s':''} ›</span>
+      <div id="sg-${s.id}" style="display:none;padding:4px 16px 8px;border-top:1px solid var(--border);">
+        ${sg.length?sg.map(g=>miniGameRow(g)).join(''):'<div class="empty" style="padding:8px 0;">No games yet.</div>'}
+      </div>
+    </div>`;
+  }
+
+  function sessCompactRow(s){
+    if(editingSessionId===s.id) return sessEditRow(s, true);
+    const sg=state.games.filter(g=>g.session_id===s.id);
+    return `<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border);">
+      <div style="flex:1;cursor:pointer;" onclick="toggleSess(${s.id})">
+        <span class="badge badge-draw" style="font-size:10px;margin-right:6px;">${s.season}</span>
+        <span style="font-size:13px;">${formatSessionDate(s.date)}</span>
+      </div>
+      <span style="font-size:12px;color:var(--muted);cursor:pointer;" onclick="toggleSess(${s.id})">${sg.length} game${sg.length!==1?'s':''} ›</span>
+      <div style="display:flex;gap:4px;flex-shrink:0;">
+        <button class="btn btn-xs" onclick="editSession(${s.id})" title="Edit">✏️</button>
+        <button class="btn btn-xs btn-danger" onclick="deleteSession(${s.id})" title="Delete">✕</button>
+      </div>
     </div>
-    <div id="sg-${s.id}" style="display:none;padding:4px 0 4px;border-bottom:1px solid var(--border);">
+    <div id="sg-${s.id}" style="display:none;padding:4px 0 4px;">
       ${sg.length?sg.map(g=>miniGameRow(g)).join(''):'<div class="empty" style="padding:8px 0;">No games yet.</div>'}
     </div>`;
-  }).join('');
+  }
+
+  let html='';
+
+  if(todaySessions.length){
+    html+=`<div class="sec-title" style="margin-top:0;">Today</div>`;
+    html+=todaySessions.map(s=>sessCard(s,'border:2px solid var(--blue);')).join('');
+  }
+
+  if(upcomingSessions.length){
+    html+=`<div class="sec-title" style="${todaySessions.length?'':'margin-top:0;'}">Upcoming</div>`;
+    html+=upcomingSessions.map(s=>sessCard(s)).join('');
+  }
+
+  if(pastSessions.length){
+    const showAll=el.dataset.pastExpanded==='true';
+    const visible=showAll?pastSessions:pastSessions.slice(0,5);
+    html+=`<div class="sec-title">Past</div>`;
+    html+=`<div class="card" style="padding:0 16px;">`;
+    html+=visible.map(s=>sessCompactRow(s)).join('');
+    if(pastSessions.length>5){
+      html+=`<div style="text-align:center;padding:10px 0;">
+        <button class="btn btn-xs" onclick="togglePastSessions()">${showAll?'Show fewer':'Show all '+pastSessions.length+' sessions'}</button>
+      </div>`;
+    }
+    html+=`</div>`;
+  }
+
+  el.innerHTML=html;
   // Restore open sessions after re-render
-  openSessions.forEach(id=>{ const el=document.getElementById('sg-'+id); if(el) el.style.display='block'; });
+  openSessions.forEach(id=>{ const el2=document.getElementById('sg-'+id); if(el2) el2.style.display='block'; });
+}
+
+function togglePastSessions(){
+  const el=document.getElementById('sessions-list');
+  el.dataset.pastExpanded=el.dataset.pastExpanded==='true'?'false':'true';
+  renderSessions();
 }
 
 function toggleSess(id){
@@ -1043,6 +1197,56 @@ function toggleSess(id){
   if(!el) return;
   if(el.style.display==='none'){ el.style.display='block'; openSessions.add(id); }
   else { el.style.display='none'; openSessions.delete(id); }
+}
+
+function editSession(id){
+  editingSessionId=id;
+  openSessions.add(id);
+  renderSessions();
+}
+
+function cancelEditSession(){
+  editingSessionId=null;
+  renderSessions();
+}
+
+async function saveSession(id, btn){
+  const date=document.getElementById(`se-date-${id}`).value;
+  const season=document.getElementById(`se-season-${id}`).value.trim();
+  if(!date){ toast('Date required.','err'); return; }
+  if(!season){ toast('Season required.','err'); return; }
+  setLoading(btn,true);
+  const {error}=await db.from('sessions').update({date,season}).eq('id',id);
+  setLoading(btn,false);
+  if(error){ toast('Failed to save.','err'); console.error(error); return; }
+  const s=state.sessions.find(s=>s.id===id);
+  if(s){ s.date=date; s.season=season; }
+  editingSessionId=null;
+  renderSessions();
+  renderTeamsSessionSel();
+  toast('Session updated.');
+}
+
+async function deleteSession(id){
+  const sg=state.games.filter(g=>g.session_id===id);
+  const msg=sg.length
+    ?`Delete this session and its ${sg.length} game${sg.length!==1?'s':''}? ELO will be recalculated.`
+    :'Delete this session?';
+  if(!confirm(msg)) return;
+  if(sg.length){
+    const {error}=await db.from('games').delete().eq('session_id',id);
+    if(error){ toast('Failed to delete games.','err'); console.error(error); return; }
+    state.games=state.games.filter(g=>g.session_id!==id);
+  }
+  const {error}=await db.from('sessions').delete().eq('id',id);
+  if(error){ toast('Failed to delete session.','err'); console.error(error); return; }
+  state.sessions=state.sessions.filter(s=>s.id!==id);
+  openSessions.delete(id);
+  if(editingSessionId===id) editingSessionId=null;
+  if(sg.length) await recalculateAllElo();
+  renderSessions();
+  renderTeamsSessionSel();
+  toast('Session deleted.');
 }
 
 function miniGameRow(g){
@@ -1144,6 +1348,8 @@ async function deleteGame(id){
 // ADMIN TEAMS
 // ═══════════════════════════════════════
 function renderTeamsTab(){
+  renderTeamsSessionSel();
+  updatePublishBtn();
   renderPresentList();
   if(state.currentNinja.length||state.currentMamie.length){
     renderTeamsOutput();
@@ -1173,23 +1379,111 @@ function renderPresentList(){
 async function togglePresent(id, val){
   const p=state.players.find(pl=>pl.id===id); if(!p) return;
   p.present=val;
+  state.affinities={together:[],apart:[]}; // reset rules when roster changes
   await db.from('players').update({present:val}).eq('id',id);
 }
 
-function generateTeams(){
-  const present=state.players.filter(p=>p.present);
-  if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
-  const scored=[...present].map(p=>({...p,cs:compositeScore(p,playerGameCount(p.id))}))
-    .sort((a,b)=>b.cs-a.cs);
-  let ninja=[],mamie=[],ns=0,ms=0;
-  for(const p of scored){
-    if(ns<=ms){ ninja.push(p); ns+=p.cs; } else { mamie.push(p); ms+=p.cs; }
+// ─── affinity helpers ───────────────────────────────────────
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr;
+}
+
+function buildTogetherGroups(present){
+  const par={};
+  present.forEach(p=>par[p.id]=p.id);
+  const find=id=>{ if(par[id]!==id) par[id]=find(par[id]); return par[id]; };
+  const presentIds=new Set(present.map(p=>p.id));
+  for(const [a,b] of state.affinities.together){
+    if(presentIds.has(a)&&presentIds.has(b)){ const pa=find(a),pb=find(b); if(pa!==pb) par[pa]=pb; }
   }
-  state.currentNinja=ninja.map(p=>p.id);
-  state.currentMamie=mamie.map(p=>p.id);
+  const gmap={};
+  for(const p of present){ const r=find(p.id); if(!gmap[r]) gmap[r]=[]; gmap[r].push(p); }
+  const groups=Object.values(gmap).map(players=>({
+    players, cs:players.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)
+  }));
+  return {groups,find};
+}
+
+function tryAssignGroups(groups, randomize){
+  const ordered=randomize?shuffle([...groups]):[...groups].sort((a,b)=>b.cs-a.cs);
+  let ninja=[],mamie=[],ns=0,ms=0;
+  for(const grp of ordered){
+    const ids=grp.players.map(p=>p.id);
+    let mustN=false,mustM=false;
+    for(const [a,b] of state.affinities.apart){
+      const inGrp=ids.includes(a)||ids.includes(b); if(!inGrp) continue;
+      const other=ids.includes(a)?b:a;
+      if(ninja.includes(other)) mustM=true;
+      if(mamie.includes(other)) mustN=true;
+    }
+    if(mustN&&mustM) return null;
+    const toN=mustN?true:mustM?false:ns<=ms;
+    if(toN){ ninja.push(...ids); ns+=grp.cs; } else { mamie.push(...ids); ms+=grp.cs; }
+  }
+  return {ninjaIds:ninja,mamieIds:mamie,gap:Math.abs(ns-ms)};
+}
+
+function pickBestRandom(results){
+  const bestGap=Math.min(...results.map(r=>r.gap));
+  const thresh=bestGap*1.15+0.001;
+  const good=results.filter(r=>r.gap<=thresh);
+  const chosen=good[Math.floor(Math.random()*good.length)];
+  state.currentNinja=chosen.ninjaIds; state.currentMamie=chosen.mamieIds;
   dragId=null; dragTeam=null;
   renderTeamsOutput();
   document.getElementById('teams-actions').style.display='block';
+}
+
+function doRandomGeneration(present){
+  const {groups,find}=buildTogetherGroups(present);
+  const presentIds=new Set(present.map(p=>p.id));
+  let satisfiable=true;
+  for(const [a,b] of state.affinities.apart){
+    if(presentIds.has(a)&&presentIds.has(b)&&find(a)===find(b)){ satisfiable=false; break; }
+  }
+  let results=[];
+  if(satisfiable){ for(let i=0;i<200;i++){ const r=tryAssignGroups(groups,true); if(r) results.push(r); } }
+  if(!results.length){
+    showAffinityWarning();
+    const saved={together:[...state.affinities.together],apart:[...state.affinities.apart]};
+    state.affinities={together:[],apart:[]};
+    const {groups:ug}=buildTogetherGroups(present);
+    for(let i=0;i<200;i++){ const r=tryAssignGroups(ug,true); if(r) results.push(r); }
+    state.affinities=saved;
+    if(!results.length){ toast('Could not generate valid teams.','err'); return; }
+  }
+  pickBestRandom(results);
+}
+
+function generateBalanced(){
+  const present=state.players.filter(p=>p.present);
+  if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
+  state.affinities={together:[],apart:[]};
+  const {groups}=buildTogetherGroups(present);
+  const result=tryAssignGroups(groups,false);
+  state.currentNinja=result.ninjaIds; state.currentMamie=result.mamieIds;
+  dragId=null; dragTeam=null;
+  renderTeamsOutput();
+  document.getElementById('teams-actions').style.display='block';
+}
+
+function generateRandom(){
+  const present=state.players.filter(p=>p.present);
+  if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
+  state.affinities={together:[],apart:[]};
+  doRandomGeneration(present);
+}
+
+function rebalanceTeams(){
+  const present=state.players.filter(p=>p.present);
+  if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
+  // does NOT reset affinities
+  doRandomGeneration(present);
+}
+
+function showAffinityWarning(){
+  const el=document.getElementById('affinity-warning'); if(el) el.style.display='flex';
 }
 
 function renderTeamsOutput(){
@@ -1198,12 +1492,14 @@ function renderTeamsOutput(){
   if(!state.currentNinja.length&&!state.currentMamie.length){
     el.innerHTML=''; hint.style.display='none';
     document.getElementById('pred-card').style.display='none';
+    const ar=document.getElementById('active-rules'); if(ar){ar.style.display='none';ar.innerHTML='';}
     return;
   }
   const ninja=state.currentNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamie=state.currentMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',true,true)}${teamCardHTML(mamie,'mamie',true,true)}</div>`;
   hint.style.display='block';
+  renderActiveRules();
   renderPredictionCard();
 }
 
@@ -1290,17 +1586,119 @@ function onDropOnTeam(e, targetTeam){
 }
 
 async function publishTeams(btn){
+  if(!state.teamsSession){ toast('Select a session first.','err'); return; }
   setLoading(btn,true);
-  // spec says row id=1 always exists → use update()
   const {error}=await db.from('published_teams')
-    .update({ninja_ids:state.currentNinja, mamie_ids:state.currentMamie})
+    .update({ninja_ids:state.currentNinja,mamie_ids:state.currentMamie,session_id:parseInt(state.teamsSession)})
     .eq('id',1);
   setLoading(btn,false);
   if(error){ toast('Failed to publish teams.','err'); console.error(error); return; }
-  // Mirror to published state so public view updates immediately
   state.publishedNinja=[...state.currentNinja];
   state.publishedMamie=[...state.currentMamie];
+  state.publishedSessionId=parseInt(state.teamsSession);
   toast('Teams published! 🎉');
+}
+
+// ─── teams tab helpers ───────────────────────────────────────
+function renderTeamsSessionSel(){
+  const sel=document.getElementById('teams-sess-sel'); if(!sel) return;
+  sel.innerHTML='<option value="">Select a session...</option>'+
+    state.sessions.map(s=>`<option value="${s.id}"${String(s.id)===String(state.teamsSession)?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
+}
+
+function updatePublishBtn(){
+  const btn=document.getElementById('publish-teams-btn'); if(!btn) return;
+  btn.disabled=!state.teamsSession;
+  btn.title=state.teamsSession?'':'Select a session first';
+}
+
+function renderActiveRules(){
+  const el=document.getElementById('active-rules'); if(!el) return;
+  const presentIds=new Set(state.players.filter(p=>p.present).map(p=>p.id));
+  const tr=state.affinities.together.filter(([a,b])=>presentIds.has(a)&&presentIds.has(b));
+  const ar=state.affinities.apart.filter(([a,b])=>presentIds.has(a)&&presentIds.has(b));
+  if(!tr.length&&!ar.length){ el.style.display='none'; el.innerHTML=''; return; }
+  const rows=[
+    ...tr.map(([a,b])=>{
+      const pa=state.players.find(p=>p.id===a),pb=state.players.find(p=>p.id===b);
+      if(!pa||!pb) return '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <span style="color:var(--success);font-size:10px;flex-shrink:0;">●</span>
+        <span style="flex:1;">${pa.name} &amp; ${pb.name} — must play together</span>
+        <button class="btn btn-xs" onclick="removeAffinity('together',${a},${b})">✕</button>
+      </div>`;
+    }),
+    ...ar.map(([a,b])=>{
+      const pa=state.players.find(p=>p.id===a),pb=state.players.find(p=>p.id===b);
+      if(!pa||!pb) return '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;">
+        <span style="color:var(--danger);font-size:10px;flex-shrink:0;">●</span>
+        <span style="flex:1;">${pa.name} &amp; ${pb.name} — must play apart</span>
+        <button class="btn btn-xs" onclick="removeAffinity('apart',${a},${b})">✕</button>
+      </div>`;
+    }),
+  ].filter(Boolean);
+  el.innerHTML=`<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Active rules</div>${rows.join('')}`;
+  el.style.display='block';
+}
+
+function removeAffinity(type,a,b){
+  state.affinities[type]=state.affinities[type].filter(([x,y])=>!(x===a&&y===b)&&!(x===b&&y===a));
+  renderTeamsOutput();
+}
+
+function onPlayerRightClick(e,playerId){
+  e.preventDefault();
+  closeCtxMenu();
+  ctxPlayerId=playerId;
+  const player=state.players.find(p=>p.id===playerId); if(!player) return;
+  const teamIds=new Set([...state.currentNinja,...state.currentMamie]);
+  const others=state.players.filter(p=>p.id!==playerId&&teamIds.has(p.id));
+  const togetherSet=new Set(state.affinities.together.filter(([a,b])=>a===playerId||b===playerId).map(([a,b])=>a===playerId?b:a));
+  const apartSet=new Set(state.affinities.apart.filter(([a,b])=>a===playerId||b===playerId).map(([a,b])=>a===playerId?b:a));
+  const toItems=others.map(op=>`<div class="ctx-item" onclick="toggleAffinity('together',${playerId},${op.id})">
+    <span style="color:var(--success);min-width:14px;font-size:12px;">${togetherSet.has(op.id)?'✓':''}</span>${op.name}</div>`).join('');
+  const apItems=others.map(op=>`<div class="ctx-item" onclick="toggleAffinity('apart',${playerId},${op.id})">
+    <span style="color:var(--danger);min-width:14px;font-size:12px;">${apartSet.has(op.id)?'✓':''}</span>${op.name}</div>`).join('');
+  const menu=document.getElementById('ctx-menu');
+  menu.innerHTML=`<div class="ctx-header">${player.name}</div>
+    ${others.length?`
+      <div class="ctx-section-label">Must play together with</div>${toItems}
+      <div class="ctx-divider"></div>
+      <div class="ctx-section-label">Must play apart from</div>${apItems}
+      <div class="ctx-divider"></div>
+    `:`<div class="ctx-item" style="color:var(--muted);">No other players in game</div>`}
+    <div class="ctx-item" style="color:var(--danger);" onclick="clearPlayerAffinities(${playerId})">Clear rules for ${player.name}</div>
+    <div class="ctx-item" onclick="closeCtxMenu()">Close</div>`;
+  menu.style.display='block';
+  let x=e.clientX,y=e.clientY;
+  const rect=menu.getBoundingClientRect();
+  if(x+rect.width>window.innerWidth) x=window.innerWidth-rect.width-8;
+  if(y+rect.height>window.innerHeight) y=window.innerHeight-rect.height-8;
+  menu.style.left=x+'px'; menu.style.top=y+'px';
+}
+
+function closeCtxMenu(){
+  const m=document.getElementById('ctx-menu'); if(m) m.style.display='none';
+  ctxPlayerId=null;
+}
+
+function toggleAffinity(type,a,b){
+  const lo=Math.min(a,b),hi=Math.max(a,b);
+  const opp=type==='together'?'apart':'together';
+  state.affinities[opp]=state.affinities[opp].filter(([x,y])=>!(x===lo&&y===hi));
+  const idx=state.affinities[type].findIndex(([x,y])=>x===lo&&y===hi);
+  if(idx>=0) state.affinities[type].splice(idx,1);
+  else state.affinities[type].push([lo,hi]);
+  closeCtxMenu();
+  renderTeamsOutput();
+}
+
+function clearPlayerAffinities(id){
+  state.affinities.together=state.affinities.together.filter(([a,b])=>a!==id&&b!==id);
+  state.affinities.apart=state.affinities.apart.filter(([a,b])=>a!==id&&b!==id);
+  closeCtxMenu();
+  renderTeamsOutput();
 }
 
 // ═══════════════════════════════════════
@@ -1581,7 +1979,7 @@ function computePrediction(){
   if(Math.abs(csDiff)<0.02){
     factors.push('Teams are evenly matched');
   } else {
-    const fav=csDiff>0?'Ninja Warrior':'Les mamies en bikini';
+    const fav=csDiff>0?'Ninja Warriors':'Les mamies en bikini';
     factors.push(`${fav} has a higher avg rating (+${Math.abs(csDiff*100).toFixed(0)})`);
   }
 
@@ -1641,10 +2039,6 @@ function renderPredictionCard(){
   const el=document.getElementById('pred-card');
   const pred=computePrediction();
   if(!pred){ el.style.display='none'; el.innerHTML=''; return; }
-  if(pred.ninjaPct===50){
-    el.innerHTML=`<div class="card" style="text-align:center;"><div class="card-title">Win prediction</div><div style="color:var(--muted);font-size:14px;padding:4px 0;">Too close to call</div></div>`;
-    el.style.display='block'; return;
-  }
   el.innerHTML=`<div class="card">
     <div class="card-title" style="margin-bottom:10px;">Win prediction</div>
     <div class="pred-labels">
@@ -1822,6 +2216,11 @@ function renderEloChart(){
 // ═══════════════════════════════════════
 // BOOT
 // ═══════════════════════════════════════
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeCtxMenu(); });
+document.addEventListener('click',e=>{
+  const m=document.getElementById('ctx-menu');
+  if(m&&m.style.display!=='none'&&!m.contains(e.target)) closeCtxMenu();
+});
 document.addEventListener('DOMContentLoaded', init);
 </script>
 </body>
