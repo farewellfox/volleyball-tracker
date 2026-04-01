@@ -377,11 +377,11 @@ input[type=number]{width:auto;}
   </div>
 
   <!-- TEAMS -->
-  <!-- SQL migration: ALTER TABLE published_teams ADD COLUMN IF NOT EXISTS session_id bigint references sessions(id); -->
+  <!-- published_teams: multiple rows per session allowed; always insert on publish; read most recent by updated_at desc -->
   <div id="adm-teams" class="section">
     <div class="card" style="margin-bottom:8px;padding:12px 16px;">
       <label class="form-label">Session</label>
-      <select id="teams-sess-sel" style="width:100%;" onchange="state.teamsSession=this.value;updatePublishBtn()">
+      <select id="teams-sess-sel" style="width:100%;" onchange="onTeamsSessChange(this.value)">
         <option value="">Select a session...</option>
       </select>
     </div>
@@ -397,6 +397,10 @@ input[type=number]{width:auto;}
     <div id="affinity-warning" style="display:none;background:#FFF8E1;border:1px solid #FFD54F;border-radius:var(--r-sm);padding:10px 14px;font-size:13px;margin-bottom:12px;align-items:center;gap:8px;">
       <span style="flex:1;">⚠ Some affinity rules could not be satisfied and were skipped.</span>
       <button class="btn btn-xs" onclick="document.getElementById('affinity-warning').style.display='none'">✕</button>
+    </div>
+    <div id="loaded-teams-banner" style="display:none;background:#E3F0FB;border:1px solid #90BEE8;border-radius:var(--r-sm);padding:10px 14px;font-size:13px;color:var(--blue-dark);margin-bottom:10px;align-items:center;gap:8px;">
+      <span style="flex:1;">Showing last published teams for this session. Regenerate to create new ones.</span>
+      <button class="btn btn-xs" onclick="document.getElementById('loaded-teams-banner').style.display='none'">✕</button>
     </div>
     <div id="teams-output"></div>
     <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">⠿ Drag players &nbsp;·&nbsp; Right-click for options</div>
@@ -453,7 +457,7 @@ input[type=number]{width:auto;}
     <div class="sec-title">Player stats</div>
     <div class="card" style="overflow-x:auto;padding:16px 8px;">
       <table class="stats-tbl">
-        <thead><tr><th>Player</th><th>G</th><th>W</th><th>W%</th><th>Elo</th><th>±5g</th></tr></thead>
+        <thead><tr><th>Player</th><th>G</th><th>W</th><th>W%</th><th>Elo</th><th>±5g</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
         <tbody id="stats-tbody"></tbody>
       </table>
     </div>
@@ -575,6 +579,31 @@ function playerWins(id){
   }).length;
 }
 
+function playerScoredGameCount(id){
+  return state.games.filter(g=>
+    ((g.ninja_ids||[]).includes(id)||(g.mamie_ids||[]).includes(id))&&
+    g.score_ninja!=null&&g.score_mamie!=null
+  ).length;
+}
+
+function playerPointsFor(id){
+  return state.games.reduce((sum,g)=>{
+    const onNinja=(g.ninja_ids||[]).includes(id);
+    const onMamie=(g.mamie_ids||[]).includes(id);
+    if((!onNinja&&!onMamie)||g.score_ninja==null||g.score_mamie==null) return sum;
+    return sum+(onNinja?g.score_ninja:g.score_mamie);
+  },0);
+}
+
+function playerPointsAgainst(id){
+  return state.games.reduce((sum,g)=>{
+    const onNinja=(g.ninja_ids||[]).includes(id);
+    const onMamie=(g.mamie_ids||[]).includes(id);
+    if((!onNinja&&!onMamie)||g.score_ninja==null||g.score_mamie==null) return sum;
+    return sum+(onNinja?g.score_mamie:g.score_ninja);
+  },0);
+}
+
 function formatDate(ds){
   if(!ds) return '—';
   const d = new Date(ds+'T12:00:00');
@@ -659,7 +688,7 @@ async function loadAll(){
     {data:h2h},
   ] = await Promise.all([
     db.from('players').select('*').order('name'),
-    db.from('published_teams').select('*').eq('id',1).maybeSingle(),
+    db.from('published_teams').select('*').order('updated_at',{ascending:false}).limit(1).maybeSingle(),
     db.from('sessions').select('*').order('date',{ascending:false}),
     db.from('games').select('*').order('created_at',{ascending:false}),
     db.from('duo_stats').select('*'),
@@ -1592,8 +1621,7 @@ async function publishTeams(btn){
   if(!state.teamsSession){ toast('Select a session first.','err'); return; }
   setLoading(btn,true);
   const {error}=await db.from('published_teams')
-    .update({ninja_ids:state.currentNinja,mamie_ids:state.currentMamie,session_id:parseInt(state.teamsSession)})
-    .eq('id',1);
+    .insert({ninja_ids:state.currentNinja,mamie_ids:state.currentMamie,session_id:parseInt(state.teamsSession)});
   setLoading(btn,false);
   if(error){ toast('Failed to publish teams.','err'); console.error(error); return; }
   state.publishedNinja=[...state.currentNinja];
@@ -1614,6 +1642,37 @@ function updatePublishBtn(){
   const btn=document.getElementById('publish-teams-btn'); if(!btn) return;
   btn.disabled=!state.teamsSession;
   btn.title=state.teamsSession?'':'Select a session first';
+}
+
+async function onTeamsSessChange(val){
+  state.teamsSession=val;
+  updatePublishBtn();
+  document.getElementById('loaded-teams-banner').style.display='none';
+  if(!val){
+    state.currentNinja=[]; state.currentMamie=[];
+    document.getElementById('teams-output').innerHTML='';
+    document.getElementById('teams-actions').style.display='none';
+    document.getElementById('pred-card').style.display='none';
+    return;
+  }
+  const {data}=await db.from('published_teams')
+    .select('ninja_ids,mamie_ids')
+    .eq('session_id',parseInt(val))
+    .order('updated_at',{ascending:false})
+    .limit(1);
+  const row=data&&data[0];
+  if(row&&(row.ninja_ids||[]).length>0){
+    state.currentNinja=row.ninja_ids;
+    state.currentMamie=row.mamie_ids||[];
+    renderTeamsOutput();
+    document.getElementById('loaded-teams-banner').style.display='flex';
+    document.getElementById('teams-actions').style.display='block';
+  } else {
+    state.currentNinja=[]; state.currentMamie=[];
+    document.getElementById('teams-output').innerHTML='';
+    document.getElementById('teams-actions').style.display='none';
+    document.getElementById('pred-card').style.display='none';
+  }
 }
 
 function renderActiveRules(){
@@ -2186,12 +2245,18 @@ function renderStatsTable(){
     const elo=p.elo_rating||1000;
     const hist5=state.eloHistory.filter(h=>h.player_id===p.id).slice(-5);
     const d5=hist5.reduce((s,h)=>s+h.change,0);
-    return {p,gc,w,pct,elo,d5};
+    const sgc=playerScoredGameCount(p.id);
+    const pf=sgc?playerPointsFor(p.id):null;
+    const pa=sgc?playerPointsAgainst(p.id):null;
+    const diff=sgc?pf-pa:null;
+    return {p,gc,w,pct,elo,d5,pf,pa,diff};
   }).filter(Boolean).sort((a,b)=>b.w-a.w);
-  if(!rows.length){ tbody.innerHTML='<tr><td colspan="6"><div class="empty">No data yet.</div></td></tr>'; return; }
+  if(!rows.length){ tbody.innerHTML='<tr><td colspan="9"><div class="empty">No data yet.</div></td></tr>'; return; }
   tbody.innerHTML=rows.map(r=>{
     const idx=playerIdx(r.p.id);
     const dc=r.d5>0?'color:var(--success)':r.d5<0?'color:var(--danger)':'color:var(--muted)';
+    const diffColor=r.diff==null?'color:var(--muted)':r.diff>0?'color:var(--success)':r.diff<0?'color:var(--danger)':'color:var(--muted)';
+    const diffStr=r.diff==null?'—':r.diff>0?`+${r.diff}`:r.diff<0?`\u2212${Math.abs(r.diff)}`:'0';
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}</span></div></td>
       <td style="font-family:'DM Mono',monospace;">${r.gc}</td>
@@ -2199,6 +2264,9 @@ function renderStatsTable(){
       <td style="font-family:'DM Mono',monospace;">${r.pct}%</td>
       <td style="font-family:'DM Mono',monospace;color:var(--blue);">${r.elo}</td>
       <td style="font-family:'DM Mono',monospace;${dc};">${r.d5>=0?'+':''}${r.d5}</td>
+      <td style="font-family:'DM Mono',monospace;">${r.pf??'—'}</td>
+      <td style="font-family:'DM Mono',monospace;">${r.pa??'—'}</td>
+      <td style="font-family:'DM Mono',monospace;${diffColor};">${diffStr}</td>
     </tr>`;
   }).join('');
 }
