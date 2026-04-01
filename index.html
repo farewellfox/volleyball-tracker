@@ -239,6 +239,19 @@ input[type=number]{width:auto;}
 .name-input:focus{border-color:var(--border) !important;background:var(--surface) !important;box-shadow:0 0 0 3px rgba(24,95,165,.12) !important;}
 .num-input{width:54px;text-align:center !important;padding:4px 6px !important;font-size:13px !important;}
 
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(26,35,50,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;}
+.modal-card{background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow-md);width:100%;max-width:420px;max-height:88vh;overflow-y:auto;padding:24px;}
+.modal-sec-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;}
+.modal-stat-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.modal-stat-row:last-child{border-bottom:none;}
+
+/* PREDICTION BAR */
+.pred-bar{height:28px;border-radius:20px;overflow:hidden;display:flex;margin:10px 0;}
+.pred-seg-ninja{background:var(--blue);display:flex;align-items:center;justify-content:flex-start;padding:0 10px;font-size:13px;font-weight:700;color:#fff;}
+.pred-seg-mamie{background:var(--pink);display:flex;align-items:center;justify-content:flex-end;padding:0 10px;font-size:13px;font-weight:700;color:#fff;}
+.pred-labels{display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;}
+
 /* MOBILE */
 @media(max-width:480px){
   .metrics-4{grid-template-columns:repeat(2,1fr);}
@@ -370,6 +383,7 @@ input[type=number]{width:auto;}
     </div>
     <div id="teams-output"></div>
     <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">⠿ Drag to reorder within a team &nbsp;·&nbsp; Drag across to move between teams</div>
+    <div id="pred-card" style="margin-top:16px;display:none;"></div>
     <div id="teams-actions" style="display:none;">
       <button class="btn btn-success btn-full" onclick="publishTeams(this)">📣 Publish teams</button>
     </div>
@@ -439,6 +453,13 @@ input[type=number]{width:auto;}
 </div><!-- /page-admin -->
 
 </div><!-- /app -->
+<!-- ══ PLAYER MODAL ══ -->
+<div id="player-modal" class="modal-overlay" style="display:none;" onclick="closePlayerModal(event)">
+  <div class="modal-card" onclick="event.stopPropagation()">
+    <div id="modal-body"></div>
+    <button class="btn btn-full" style="margin-top:16px;" onclick="closePlayerModal()">Close</button>
+  </div>
+</div>
 
 <script>
 // ═══════════════════════════════════════
@@ -461,6 +482,7 @@ let state = {
   games: [],
   duoStats: [],
   eloHistory: [],
+  h2h: [],
   currentNinja: [],  // in-memory (may differ from published)
   currentMamie: [],
   publishedNinja: [], // what's actually in the DB
@@ -582,6 +604,7 @@ async function loadAll(){
     {data:games},
     {data:duoStats},
     {data:eloHistory},
+    {data:h2h},
   ] = await Promise.all([
     db.from('players').select('*').order('name'),
     db.from('published_teams').select('*').eq('id',1).maybeSingle(),
@@ -589,6 +612,7 @@ async function loadAll(){
     db.from('games').select('*').order('created_at',{ascending:false}),
     db.from('duo_stats').select('*'),
     db.from('elo_history').select('*').order('id'),
+    db.from('head_to_head').select('*'),
   ]);
   if(e1) throw e1;
   state.players = players || [];
@@ -596,6 +620,7 @@ async function loadAll(){
   state.games = games || [];
   state.duoStats = duoStats || [];
   state.eloHistory = eloHistory || [];
+  state.h2h = h2h || [];
   if(pt){
     state.currentNinja   = pt.ninja_ids||[];
     state.currentMamie   = pt.mamie_ids||[];
@@ -885,18 +910,20 @@ function renderRoster(){
   el.innerHTML=state.players.map((p,i)=>{
     const gc=playerGameCount(p.id);
     const flag=flags[p.id];
-    return `<div class="player-row">
+    return `<div class="player-row" style="cursor:pointer;" onclick="showPlayerModal(${p.id})">
       ${avatarHTML(p.name,i)}
       <div style="flex:1;">
         <input class="name-input" type="text" value="${p.name.replace(/"/g,'&quot;')}"
+          onclick="event.stopPropagation()"
           onblur="updatePName(${p.id},this.value)" onchange="updatePName(${p.id},this.value)" />
       </div>
       <span style="font-size:11px;color:var(--muted);">sk</span>
       <input type="number" class="num-input" min="1" max="10" value="${p.skill}" style="width:54px;"
+        onclick="event.stopPropagation()"
         onchange="updatePSkill(${p.id},this.value)" />
       <span class="elo-tag">${p.elo_rating||1000}</span>
       ${flag?'<span class="badge badge-warning">⚠</span>':''}
-      <button class="btn btn-xs btn-danger" onclick="removePlayer(${p.id})">✕</button>
+      <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();removePlayer(${p.id})">✕</button>
     </div>`;
   }).join('');
 }
@@ -1168,11 +1195,16 @@ function generateTeams(){
 function renderTeamsOutput(){
   const el=document.getElementById('teams-output');
   const hint=document.getElementById('teams-hint');
-  if(!state.currentNinja.length&&!state.currentMamie.length){ el.innerHTML=''; hint.style.display='none'; return; }
+  if(!state.currentNinja.length&&!state.currentMamie.length){
+    el.innerHTML=''; hint.style.display='none';
+    document.getElementById('pred-card').style.display='none';
+    return;
+  }
   const ninja=state.currentNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamie=state.currentMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',true,true)}${teamCardHTML(mamie,'mamie',true,true)}</div>`;
   hint.style.display='block';
+  renderPredictionCard();
 }
 
 // ─── drag-and-drop ───────────────────────────────────────
@@ -1321,12 +1353,16 @@ async function recordGame(btn){
     state.games.unshift(game);
     await applyEloChanges(game);
     await updateDuoStats(game);
+    await updateH2H(game);
     // Refresh elo_history from DB
     const {data:hist}=await db.from('elo_history').select('*').order('id');
     state.eloHistory=hist||[];
     // Refresh duo stats
     const {data:ds}=await db.from('duo_stats').select('*');
     state.duoStats=ds||[];
+    // Refresh h2h
+    const {data:h2hData}=await db.from('head_to_head').select('*');
+    state.h2h=h2hData||[];
     toast('Game saved! ✓');
     renderRecordTab();
   } catch(e){
@@ -1460,6 +1496,247 @@ async function updateDuoStats(game){
       }
     }
   }
+}
+
+async function updateH2H(game){
+  const ninjaIds=game.ninja_ids||[];
+  const mamieIds=game.mamie_ids||[];
+  for(const nId of ninjaIds){
+    for(const mId of mamieIds){
+      const a=Math.min(nId,mId);
+      const b=Math.max(nId,mId);
+      const aIsNinja=nId<mId;
+      const aWon=aIsNinja?game.winner==='ninja':game.winner==='mamie';
+      const bWon=aIsNinja?game.winner==='mamie':game.winner==='ninja';
+      const existing=state.h2h.find(h=>h.player_a_id===a&&h.player_b_id===b);
+      if(existing){
+        const ng=existing.games+1;
+        const naw=existing.player_a_wins+(aWon?1:0);
+        const nbw=existing.player_b_wins+(bWon?1:0);
+        await db.from('head_to_head').update({games:ng,player_a_wins:naw,player_b_wins:nbw})
+          .eq('player_a_id',a).eq('player_b_id',b);
+        existing.games=ng; existing.player_a_wins=naw; existing.player_b_wins=nbw;
+      } else {
+        const {data}=await db.from('head_to_head').insert({
+          player_a_id:a,player_b_id:b,
+          player_a_wins:aWon?1:0,player_b_wins:bWon?1:0,games:1
+        }).select().single();
+        if(data) state.h2h.push(data);
+      }
+    }
+  }
+}
+
+function computePrediction(){
+  const ninjaIds=state.currentNinja;
+  const mamieIds=state.currentMamie;
+  if(!ninjaIds.length||!mamieIds.length) return null;
+  const ninjas=ninjaIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  const mamies=mamieIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
+  if(!ninjas.length||!mamies.length) return null;
+
+  // Step 1: base score gap (50%)
+  const nAvgCs=ninjas.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/ninjas.length;
+  const mAvgCs=mamies.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/mamies.length;
+  const baseEdge=nAvgCs-mAvgCs;
+
+  // Step 2: duo synergy bonus (25%)
+  const duoBonus=(ids)=>{
+    let bonus=0;
+    for(let i=0;i<ids.length;i++){
+      for(let j=i+1;j<ids.length;j++){
+        const a=Math.min(ids[i],ids[j]),b=Math.max(ids[i],ids[j]);
+        const d=state.duoStats.find(x=>x.player_a_id===a&&x.player_b_id===b);
+        if(!d||d.games_together<5) continue;
+        const wr=d.wins_together/d.games_together;
+        if(wr>0.55) bonus+=Math.min(0.06,(wr-0.5)*0.04);
+      }
+    }
+    return bonus;
+  };
+  const duoEdge=duoBonus(ninjaIds)-duoBonus(mamieIds);
+
+  // Step 3: h2h edge (25%)
+  let h2hEdge=0;
+  for(const nId of ninjaIds){
+    for(const mId of mamieIds){
+      const a=Math.min(nId,mId),b=Math.max(nId,mId);
+      const h=state.h2h.find(x=>x.player_a_id===a&&x.player_b_id===b);
+      if(!h||h.games<5) continue;
+      const aIsNinja=nId<mId;
+      const nWins=aIsNinja?h.player_a_wins:h.player_b_wins;
+      const mWins=aIsNinja?h.player_b_wins:h.player_a_wins;
+      h2hEdge+=(nWins-mWins)/h.games*0.02;
+    }
+  }
+
+  // Step 4: final
+  const totalEdge=(baseEdge*0.50)+(duoEdge*0.25)+(h2hEdge*0.25);
+  const ninjaPct=Math.max(30,Math.min(70,Math.round(50+totalEdge*100)));
+  const mamiePct=100-ninjaPct;
+
+  // Key factors
+  const factors=[];
+  const csDiff=nAvgCs-mAvgCs;
+  if(Math.abs(csDiff)<0.02){
+    factors.push('Teams are evenly matched');
+  } else {
+    const fav=csDiff>0?'Ninja Warrior':'Les mamies en bikini';
+    factors.push(`${fav} has a higher avg rating (+${Math.abs(csDiff*100).toFixed(0)})`);
+  }
+
+  // Top qualifying duo per team
+  const topDuo=(ids)=>{
+    let best=null;
+    for(let i=0;i<ids.length;i++){
+      for(let j=i+1;j<ids.length;j++){
+        const a=Math.min(ids[i],ids[j]),b=Math.max(ids[i],ids[j]);
+        const d=state.duoStats.find(x=>x.player_a_id===a&&x.player_b_id===b);
+        if(!d||d.games_together<5) continue;
+        const wr=d.wins_together/d.games_together;
+        if(wr<=0.55) continue;
+        if(!best||wr>best.wr){
+          const pa=state.players.find(p=>p.id===a),pb=state.players.find(p=>p.id===b);
+          if(pa&&pb) best={pa,pb,wr,g:d.games_together};
+        }
+      }
+    }
+    return best;
+  };
+  const nd=topDuo(ninjaIds), md=topDuo(mamieIds);
+  let hasHistory=false;
+  if(nd){ hasHistory=true; factors.push(`${nd.pa.name} & ${nd.pb.name} are ${Math.round(nd.wr*100)}% together (${nd.g}G)`); }
+  if(md){ hasHistory=true; factors.push(`${md.pa.name} & ${md.pb.name} are ${Math.round(md.wr*100)}% together (${md.g}G)`); }
+
+  // Strongest h2h edge
+  let bestH2H=null;
+  for(const nId of ninjaIds){
+    for(const mId of mamieIds){
+      const a=Math.min(nId,mId),b=Math.max(nId,mId);
+      const h=state.h2h.find(x=>x.player_a_id===a&&x.player_b_id===b);
+      if(!h||h.games<5) continue;
+      const aIsNinja=nId<mId;
+      const nWins=aIsNinja?h.player_a_wins:h.player_b_wins;
+      const mWins=aIsNinja?h.player_b_wins:h.player_a_wins;
+      const absEdge=Math.abs(nWins-mWins);
+      if(!bestH2H||absEdge>bestH2H.absEdge){
+        const nP=state.players.find(p=>p.id===nId),mP=state.players.find(p=>p.id===mId);
+        if(nP&&mP) bestH2H={nP,mP,nWins,mWins,g:h.games,absEdge};
+      }
+    }
+  }
+  if(bestH2H){
+    hasHistory=true;
+    const leader=bestH2H.nWins>bestH2H.mWins?bestH2H.nP:bestH2H.mP;
+    const opp=bestH2H.nWins>bestH2H.mWins?bestH2H.mP:bestH2H.nP;
+    const w=Math.max(bestH2H.nWins,bestH2H.mWins),l=Math.min(bestH2H.nWins,bestH2H.mWins);
+    factors.push(`${leader.name} leads vs ${opp.name} (${w}–${l})`);
+  }
+  if(!hasHistory) factors.push('Not enough history for duo/H2H factors yet');
+
+  return {ninjaPct,mamiePct,factors:factors.slice(0,4)};
+}
+
+function renderPredictionCard(){
+  const el=document.getElementById('pred-card');
+  const pred=computePrediction();
+  if(!pred){ el.style.display='none'; el.innerHTML=''; return; }
+  if(pred.ninjaPct===50){
+    el.innerHTML=`<div class="card" style="text-align:center;"><div class="card-title">Win prediction</div><div style="color:var(--muted);font-size:14px;padding:4px 0;">Too close to call</div></div>`;
+    el.style.display='block'; return;
+  }
+  el.innerHTML=`<div class="card">
+    <div class="card-title" style="margin-bottom:10px;">Win prediction</div>
+    <div class="pred-labels">
+      <span style="color:var(--blue);font-weight:600;">🥷 Ninja</span>
+      <span style="color:var(--pink);font-weight:600;">💅 Mamies</span>
+    </div>
+    <div class="pred-bar">
+      <div class="pred-seg-ninja" style="width:${pred.ninjaPct}%;">${pred.ninjaPct}%</div>
+      <div class="pred-seg-mamie" style="width:${pred.mamiePct}%;">${pred.mamiePct}%</div>
+    </div>
+    <div style="margin-top:10px;">
+      ${pred.factors.map(f=>`<div style="font-size:12px;color:var(--muted);padding:2px 0;">· ${f}</div>`).join('')}
+    </div>
+  </div>`;
+  el.style.display='block';
+}
+
+function showPlayerModal(id){
+  const p=state.players.find(pl=>pl.id===id); if(!p) return;
+  const idx=playerIdx(id);
+  const gc=playerGameCount(id);
+  const w=playerWins(id);
+  const pct=gc>0?Math.round(w/gc*100):0;
+  const elo=p.elo_rating||1000;
+  const eloDiff=elo-1000;
+  const hist5=state.eloHistory.filter(h=>h.player_id===id).slice(-5);
+  const d5=hist5.reduce((s,h)=>s+h.change,0);
+  const eColor=eloDiff>0?'var(--success)':eloDiff<0?'var(--danger)':'var(--muted)';
+  const dColor=d5>0?'var(--success)':d5<0?'var(--danger)':'var(--muted)';
+  const eStr=(eloDiff>=0?'+':'')+eloDiff;
+  const d5Str=(d5>=0?'+':'')+d5;
+
+  // Duo partners (min 3 games)
+  const duoPairs=state.duoStats
+    .filter(d=>(d.player_a_id===id||d.player_b_id===id)&&d.games_together>=3)
+    .map(d=>{
+      const partnerId=d.player_a_id===id?d.player_b_id:d.player_a_id;
+      const partner=state.players.find(pl=>pl.id===partnerId); if(!partner) return null;
+      return {partner,g:d.games_together,w:d.wins_together,pct:Math.round(d.wins_together/d.games_together*100)};
+    }).filter(Boolean).sort((a,b)=>b.pct-a.pct||b.g-a.g).slice(0,3);
+
+  // H2H records (min 3 games)
+  const h2hRecs=state.h2h
+    .filter(h=>(h.player_a_id===id||h.player_b_id===id)&&h.games>=3)
+    .map(h=>{
+      const oppId=h.player_a_id===id?h.player_b_id:h.player_a_id;
+      const myW=h.player_a_id===id?h.player_a_wins:h.player_b_wins;
+      const theirW=h.player_a_id===id?h.player_b_wins:h.player_a_wins;
+      const opp=state.players.find(pl=>pl.id===oppId); if(!opp) return null;
+      return {opp,myW,theirW,g:h.games,diff:myW-theirW};
+    }).filter(Boolean);
+  const bestH2H=[...h2hRecs].sort((a,b)=>b.diff-a.diff).slice(0,3);
+  const worstH2H=[...h2hRecs].sort((a,b)=>a.diff-b.diff).slice(0,3);
+
+  document.getElementById('modal-body').innerHTML=`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
+      ${avatarHTML(p.name,idx,48)}
+      <div>
+        <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;">${p.name}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+          ${skillBadge(p.skill)}
+          <span class="lb-elo">${elo}</span>
+          <span style="font-size:12px;color:${eColor};">${eStr} from start</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <div class="modal-sec-title">Season stats</div>
+      <div class="modal-stat-row"><span>Games played</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${gc}</span></div>
+      <div class="modal-stat-row"><span>Wins</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${w}</span></div>
+      <div class="modal-stat-row"><span>Win rate</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${pct}%</span></div>
+      <div class="modal-stat-row"><span>Elo last 5 games</span><span style="font-family:'DM Mono',monospace;font-weight:600;color:${dColor};">${d5Str}</span></div>
+    </div>
+    ${duoPairs.length?`<div style="margin-bottom:16px;">
+      <div class="modal-sec-title">Best duo partners</div>
+      ${duoPairs.map(d=>`<div class="modal-stat-row"><span>${d.partner.name}</span><span style="font-family:'DM Mono',monospace;">${d.w}W ${d.g}G <strong style="color:var(--success);">${d.pct}%</strong></span></div>`).join('')}
+    </div>`:''}
+    ${bestH2H.length?`<div style="margin-bottom:16px;">
+      <div class="modal-sec-title">Best H2H records</div>
+      ${bestH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="font-family:'DM Mono',monospace;"><strong style="color:var(--success);">${h.myW}</strong>–${h.theirW} (${h.g}G)</span></div>`).join('')}
+    </div>`:''}
+    ${worstH2H.length?`<div style="margin-bottom:16px;">
+      <div class="modal-sec-title">Worst H2H records</div>
+      ${worstH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="font-family:'DM Mono',monospace;">${h.myW}–<strong style="color:var(--danger);">${h.theirW}</strong> (${h.g}G)</span></div>`).join('')}
+    </div>`:''}
+  `;
+  document.getElementById('player-modal').style.display='flex';
+}
+
+function closePlayerModal(event){
+  if(event&&event.target!==document.getElementById('player-modal')) return;
+  document.getElementById('player-modal').style.display='none';
 }
 
 // ═══════════════════════════════════════
