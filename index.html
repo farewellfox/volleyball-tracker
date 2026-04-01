@@ -1605,8 +1605,9 @@ async function publishTeams(btn){
 // ─── teams tab helpers ───────────────────────────────────────
 function renderTeamsSessionSel(){
   const sel=document.getElementById('teams-sess-sel'); if(!sel) return;
+  const sorted=[...state.sessions].sort((a,b)=>b.date.localeCompare(a.date));
   sel.innerHTML='<option value="">Select a session...</option>'+
-    state.sessions.map(s=>`<option value="${s.id}"${String(s.id)===String(state.teamsSession)?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
+    sorted.map(s=>`<option value="${s.id}"${String(s.id)===String(state.teamsSession)?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
 }
 
 function updatePublishBtn(){
@@ -1710,8 +1711,9 @@ function clearPlayerAffinities(id){
 function renderRecordTab(){
   const sel=document.getElementById('record-sess-sel');
   const prev=sel.value;
+  const sortedSess=[...state.sessions].sort((a,b)=>b.date.localeCompare(a.date));
   sel.innerHTML='<option value="">Select a session...</option>'+
-    state.sessions.map(s=>`<option value="${s.id}"${prev==s.id?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
+    sortedSess.map(s=>`<option value="${s.id}"${prev==s.id?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
   const hasTeams=state.currentNinja.length>0||state.currentMamie.length>0;
   document.getElementById('record-no-teams').style.display=hasTeams?'none':'block';
   document.getElementById('record-form').style.display=hasTeams?'block':'none';
