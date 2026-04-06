@@ -454,10 +454,13 @@ input[type=number]{width:auto;}
       <div class="metric-card"><div class="metric-val" style="color:var(--pink);" id="st-mamie">—</div><div class="metric-label">Mamie wins</div></div>
       <div class="metric-card"><div class="metric-val" id="st-draw">—</div><div class="metric-label">Draws</div></div>
     </div>
-    <div class="sec-title">Player stats</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div class="sec-title" style="margin-bottom:0;">Player stats</div>
+      <select id="adm-season-sel" onchange="renderStatsTable()" style="width:auto;font-size:13px;padding:6px 10px;"></select>
+    </div>
     <div class="card" style="overflow-x:auto;padding:16px 8px;">
       <table class="stats-tbl">
-        <thead><tr><th>Player</th><th>G</th><th>W</th><th>W%</th><th>Elo</th><th>±5g</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
+        <thead><tr><th>Player</th><th>G</th><th>W-L</th><th>W%</th><th>Elo</th><th>±5g</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
         <tbody id="stats-tbody"></tbody>
       </table>
     </div>
@@ -601,6 +604,53 @@ function playerPointsAgainst(id){
     const onMamie=(g.mamie_ids||[]).includes(id);
     if((!onNinja&&!onMamie)||g.score_ninja==null||g.score_mamie==null) return sum;
     return sum+(onNinja?g.score_mamie:g.score_ninja);
+  },0);
+}
+
+function getSeasons(){
+  return [...new Set(state.sessions.map(s=>s.season))].sort().reverse();
+}
+
+function filterGamesBySeason(seasonName){
+  if(!seasonName||seasonName==='all') return state.games;
+  const ids=new Set(state.sessions.filter(s=>s.season===seasonName).map(s=>s.id));
+  return state.games.filter(g=>ids.has(g.session_id));
+}
+
+function playerGameCountFromGames(id,games){
+  return games.filter(g=>(g.ninja_ids||[]).includes(id)||(g.mamie_ids||[]).includes(id)).length;
+}
+
+function playerWinsFromGames(id,games){
+  return games.filter(g=>{
+    const onN=(g.ninja_ids||[]).includes(id);
+    const onM=(g.mamie_ids||[]).includes(id);
+    return (onN&&g.winner==='ninja')||(onM&&g.winner==='mamie');
+  }).length;
+}
+
+function playerScoredGameCountFromGames(id,games){
+  return games.filter(g=>
+    ((g.ninja_ids||[]).includes(id)||(g.mamie_ids||[]).includes(id))&&
+    g.score_ninja!=null&&g.score_mamie!=null
+  ).length;
+}
+
+function playerPointsForFromGames(id,games){
+  return games.reduce((sum,g)=>{
+    const onN=(g.ninja_ids||[]).includes(id);
+    const onM=(g.mamie_ids||[]).includes(id);
+    if((!onN&&!onM)||g.score_ninja==null||g.score_mamie==null) return sum;
+    return sum+(onN?g.score_ninja:g.score_mamie);
+  },0);
+}
+
+function playerPointsAgainstFromGames(id,games){
+  return games.reduce((sum,g)=>{
+    const onN=(g.ninja_ids||[]).includes(id);
+    const onM=(g.mamie_ids||[]).includes(id);
+    if((!onN&&!onM)||g.score_ninja==null||g.score_mamie==null) return sum;
+    return sum+(onN?g.score_mamie:g.score_ninja);
   },0);
 }
 
@@ -851,32 +901,43 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
 
 function renderPubLb(){
   const el = document.getElementById('pub-lb');
-  const winsLb = buildWinsLb();
-  const eloLb = [...state.players].filter(p=>playerGameCount(p.id)>0)
+  const seasons = getSeasons();
+  const prev = document.getElementById('pub-season-sel')?.value ?? 'all';
+  const seasonOpts = '<option value="all">All-time</option>'+seasons.map(s=>`<option value="${s}">${s}</option>`).join('');
+  const filteredGames = filterGamesBySeason(prev==='all'?null:prev);
+
+  const wlLb = state.players.map(p=>{
+    const gc=playerGameCountFromGames(p.id,filteredGames);
+    const w=playerWinsFromGames(p.id,filteredGames);
+    return {p,gc,w,l:gc-w};
+  }).filter(x=>x.gc>0).sort((a,b)=>b.w-a.w||a.l-b.l);
+
+  const eloLb=[...state.players].filter(p=>playerGameCount(p.id)>0)
     .sort((a,b)=>(b.elo_rating||1000)-(a.elo_rating||1000));
+
   el.innerHTML=`
-    <div class="sec-title">Most wins</div>
-    <div class="card" style="padding:8px 16px;">${winsLbHTML(winsLb)}</div>
+    <div style="margin-bottom:16px;">
+      <select id="pub-season-sel" onchange="renderPubLb()" style="width:100%;">${seasonOpts}</select>
+    </div>
+    <div class="sec-title">W-L Record</div>
+    <div class="card" style="padding:8px 16px;">${wlLbHTML(wlLb)}</div>
     <div class="sec-title">Elo ratings</div>
     <div class="card" style="padding:8px 16px;">${eloLbHTML(eloLb)}</div>`;
+
+  document.getElementById('pub-season-sel').value=prev;
 }
 
-function buildWinsLb(){
-  return state.players.map(p=>({p, gp:playerGameCount(p.id), w:playerWins(p.id)}))
-    .filter(x=>x.gp>0).sort((a,b)=>b.w-a.w||b.gp-a.gp);
-}
-
-function winsLbHTML(lb){
+function wlLbHTML(lb){
   if(!lb.length) return '<div class="empty">No games yet.</div>';
   return lb.map((x,r)=>{
     const idx=playerIdx(x.p.id);
-    const pct=Math.round(x.w/x.gp*100);
+    const pct=x.gc>0?Math.round(x.w/x.gc*100):0;
     const rc=r===0?'r1':r===1?'r2':r===2?'r3':'';
     return `<div class="lb-row">
       <span class="lb-rank ${rc}">${r+1}</span>
       ${avatarHTML(x.p.name,idx,28)}
       <span style="flex:1;font-size:14px;font-weight:500;">${x.p.name}</span>
-      <span class="lb-stat">${x.w}W&nbsp;${x.gp}G</span>
+      <span class="lb-stat">${x.w}W–${x.l}L</span>
       <div class="pct-wrap"><div class="pct-bar" style="width:${pct}%;"></div></div>
       <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;min-width:34px;text-align:right;">${pct}%</span>
     </div>`;
@@ -2218,14 +2279,20 @@ function renderStatsTab(){
   document.getElementById('st-ninja').textContent=state.games.filter(g=>g.winner==='ninja').length;
   document.getElementById('st-mamie').textContent=state.games.filter(g=>g.winner==='mamie').length;
   document.getElementById('st-draw').textContent=state.games.filter(g=>g.winner==='draw').length;
+  // Populate season selector
+  const sel=document.getElementById('adm-season-sel');
+  const prevSel=sel.value;
+  const seasons=getSeasons();
+  sel.innerHTML='<option value="all">All-time</option>'+seasons.map(s=>`<option value="${s}">${s}</option>`).join('');
+  if(prevSel&&sel.querySelector(`option[value="${prevSel}"]`)) sel.value=prevSel;
   renderStatsTable();
   // Elo selector
-  const sel=document.getElementById('elo-sel');
-  const prev=sel.value;
-  sel.innerHTML='<option value="">Select player...</option>'+
+  const eloSel=document.getElementById('elo-sel');
+  const prevElo=eloSel.value;
+  eloSel.innerHTML='<option value="">Select player...</option>'+
     state.players.filter(p=>playerGameCount(p.id)>0)
-      .map(p=>`<option value="${p.id}"${prev==p.id?' selected':''}>${p.name}</option>`).join('');
-  if(prev&&sel.value===prev) renderEloChart();
+      .map(p=>`<option value="${p.id}"${prevElo==p.id?' selected':''}>${p.name}</option>`).join('');
+  if(prevElo&&eloSel.value===prevElo) renderEloChart();
   // Duos
   document.getElementById('adm-duo-list').innerHTML=duoListHTML(buildDuos());
   // Flags
@@ -2237,19 +2304,22 @@ function renderStatsTab(){
 }
 
 function renderStatsTable(){
+  const seasonName=document.getElementById('adm-season-sel')?.value??'all';
+  const games=filterGamesBySeason(seasonName==='all'?null:seasonName);
   const tbody=document.getElementById('stats-tbody');
   const rows=state.players.map(p=>{
-    const gc=playerGameCount(p.id); if(!gc) return null;
-    const w=playerWins(p.id);
+    const gc=playerGameCountFromGames(p.id,games); if(!gc) return null;
+    const w=playerWinsFromGames(p.id,games);
+    const l=gc-w;
     const pct=Math.round(w/gc*100);
     const elo=p.elo_rating||1000;
     const hist5=state.eloHistory.filter(h=>h.player_id===p.id).slice(-5);
     const d5=hist5.reduce((s,h)=>s+h.change,0);
-    const sgc=playerScoredGameCount(p.id);
-    const pf=sgc?playerPointsFor(p.id):null;
-    const pa=sgc?playerPointsAgainst(p.id):null;
+    const sgc=playerScoredGameCountFromGames(p.id,games);
+    const pf=sgc?playerPointsForFromGames(p.id,games):null;
+    const pa=sgc?playerPointsAgainstFromGames(p.id,games):null;
     const diff=sgc?pf-pa:null;
-    return {p,gc,w,pct,elo,d5,pf,pa,diff};
+    return {p,gc,w,l,pct,elo,d5,pf,pa,diff};
   }).filter(Boolean).sort((a,b)=>b.w-a.w);
   if(!rows.length){ tbody.innerHTML='<tr><td colspan="9"><div class="empty">No data yet.</div></td></tr>'; return; }
   tbody.innerHTML=rows.map(r=>{
@@ -2260,7 +2330,7 @@ function renderStatsTable(){
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}</span></div></td>
       <td style="font-family:'DM Mono',monospace;">${r.gc}</td>
-      <td style="font-family:'DM Mono',monospace;">${r.w}</td>
+      <td style="font-family:'DM Mono',monospace;">${r.w}–${r.l}</td>
       <td style="font-family:'DM Mono',monospace;">${r.pct}%</td>
       <td style="font-family:'DM Mono',monospace;color:var(--blue);">${r.elo}</td>
       <td style="font-family:'DM Mono',monospace;${dc};">${r.d5>=0?'+':''}${r.d5}</td>
