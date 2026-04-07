@@ -857,7 +857,22 @@ function renderPubTeams(){
   }
   const ninja=state.publishedNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamie=state.publishedMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',false,false)}${teamCardHTML(mamie,'mamie',false,false)}</div>`;
+  const nAvgCs=ninja.length?ninja.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/ninja.length:0;
+  const mAvgCs=mamie.length?mamie.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/mamie.length:0;
+  const nWinPct=Math.round(eloExpected(nAvgCs*1000,mAvgCs*1000)*100);
+  const mWinPct=100-nWinPct;
+  const projHTML=`<div class="card" style="margin-top:16px;">
+    <div class="card-title" style="margin-bottom:10px;">Win prediction</div>
+    <div class="pred-labels">
+      <span style="color:var(--blue);font-weight:600;">🥷 Ninja</span>
+      <span style="color:var(--pink);font-weight:600;">💅 Mamies</span>
+    </div>
+    <div class="pred-bar">
+      <div class="pred-seg-ninja" style="width:${nWinPct}%;">${nWinPct}%</div>
+      <div class="pred-seg-mamie" style="width:${mWinPct}%;">${mWinPct}%</div>
+    </div>
+  </div>`;
+  el.innerHTML=`<div class="teams-wrap">${teamCardHTML(ninja,'ninja',false,false)}${teamCardHTML(mamie,'mamie',false,false)}</div>${projHTML}`;
 }
 
 function teamCardHTML(players, team, swappable=false, showStats=true){
