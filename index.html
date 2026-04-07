@@ -857,10 +857,9 @@ function renderPubTeams(){
   }
   const ninja=state.publishedNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamie=state.publishedMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  const nAvgCs=ninja.length?ninja.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/ninja.length:0;
-  const mAvgCs=mamie.length?mamie.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/mamie.length:0;
-  const nWinPct=Math.round(eloExpected(nAvgCs*1000,mAvgCs*1000)*100);
-  const mWinPct=100-nWinPct;
+  const pred=computePredictionPcts(state.publishedNinja,state.publishedMamie);
+  const nWinPct=pred?pred.ninjaPct:50;
+  const mWinPct=pred?pred.mamiePct:50;
   const projHTML=`<div class="card" style="margin-top:16px;">
     <div class="card-title" style="margin-bottom:10px;">Win prediction</div>
     <div class="pred-labels">
@@ -2077,20 +2076,13 @@ async function updateH2H(game){
   }
 }
 
-function computePrediction(){
-  const ninjaIds=state.currentNinja;
-  const mamieIds=state.currentMamie;
-  if(!ninjaIds.length||!mamieIds.length) return null;
+function computePredictionPcts(ninjaIds, mamieIds){
   const ninjas=ninjaIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamies=mamieIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   if(!ninjas.length||!mamies.length) return null;
-
-  // Step 1: base score gap (50%)
   const nAvgCs=ninjas.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/ninjas.length;
   const mAvgCs=mamies.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/mamies.length;
   const baseEdge=nAvgCs-mAvgCs;
-
-  // Step 2: duo synergy bonus (25%)
   const duoBonus=(ids)=>{
     let bonus=0;
     for(let i=0;i<ids.length;i++){
@@ -2105,8 +2097,6 @@ function computePrediction(){
     return bonus;
   };
   const duoEdge=duoBonus(ninjaIds)-duoBonus(mamieIds);
-
-  // Step 3: h2h edge (25%)
   let h2hEdge=0;
   for(const nId of ninjaIds){
     for(const mId of mamieIds){
@@ -2119,11 +2109,18 @@ function computePrediction(){
       h2hEdge+=(nWins-mWins)/h.games*0.02;
     }
   }
-
-  // Step 4: final
   const totalEdge=(baseEdge*0.50)+(duoEdge*0.25)+(h2hEdge*0.25);
   const ninjaPct=Math.max(30,Math.min(70,Math.round(50+totalEdge*100)));
-  const mamiePct=100-ninjaPct;
+  return {ninjaPct,mamiePct:100-ninjaPct,nAvgCs,mAvgCs,ninjaIds,mamieIds};
+}
+
+function computePrediction(){
+  const ninjaIds=state.currentNinja;
+  const mamieIds=state.currentMamie;
+  if(!ninjaIds.length||!mamieIds.length) return null;
+  const pcts=computePredictionPcts(ninjaIds,mamieIds);
+  if(!pcts) return null;
+  const {ninjaPct,mamiePct,nAvgCs,mAvgCs}=pcts;
 
   // Key factors
   const factors=[];
