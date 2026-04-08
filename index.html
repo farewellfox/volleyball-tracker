@@ -1807,6 +1807,8 @@ function onPlayerRightClick(e,playerId){
       <div class="ctx-divider"></div>
     `:`<div class="ctx-item" style="color:var(--muted);">No other players in game</div>`}
     <div class="ctx-item" style="color:var(--danger);" onclick="clearPlayerAffinities(${playerId})">Clear rules for ${player.name}</div>
+    <div class="ctx-divider"></div>
+    <div class="ctx-item" style="color:var(--danger);" onclick="removeFromTeam(${playerId})">Remove from game</div>
     <div class="ctx-item" onclick="closeCtxMenu()">Close</div>`;
   menu.style.display='block';
   let x=e.clientX,y=e.clientY;
@@ -1835,6 +1837,13 @@ function toggleAffinity(type,a,b){
 function clearPlayerAffinities(id){
   state.affinities.together=state.affinities.together.filter(([a,b])=>a!==id&&b!==id);
   state.affinities.apart=state.affinities.apart.filter(([a,b])=>a!==id&&b!==id);
+  closeCtxMenu();
+  renderTeamsOutput();
+}
+
+function removeFromTeam(id){
+  state.currentNinja=state.currentNinja.filter(x=>x!==id);
+  state.currentMamie=state.currentMamie.filter(x=>x!==id);
   closeCtxMenu();
   renderTeamsOutput();
 }
