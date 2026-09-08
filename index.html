@@ -139,7 +139,10 @@ input[type=number]{width:auto;}
 .badge-mamie{background:var(--pink-light);color:var(--pink-dark);}
 .badge-draw{background:#f0f0f0;color:var(--muted);}
 .badge-warning{background:#FFF3CD;color:#856404;}
+.badge-retired{background:#ECECEC;color:var(--muted);}
 .elo-tag{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);flex-shrink:0;}
+.ret-tag{font-size:11px;font-style:italic;color:var(--muted);margin-left:5px;font-weight:400;}
+.player-row.retired{opacity:.55;}
 
 /* LEADERBOARD */
 .lb-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);}
@@ -531,6 +534,7 @@ let editingGameId = null;
 let editingSessionId = null;
 let openSessions = new Set();
 let eloChart = null;
+let showRetired = false;
 let dismissedFlags = JSON.parse(localStorage.getItem('vball-dismissed') || '{}');
 
 // ═══════════════════════════════════════
@@ -703,6 +707,12 @@ function setLoading(btn, on){
 }
 
 function playerIdx(id){ return state.players.findIndex(p=>p.id===id); }
+
+// Retired players stay in state.players (stats/Elo/duos/H2H all still resolve them);
+// `retired` is only a roster / present-list / team-generation filter.
+function activePlayers(){ return state.players.filter(p=>!p.retired); }
+function presentPlayers(){ return state.players.filter(p=>p.present&&!p.retired); }
+function retTag(p){ return p.retired?'<span class="ret-tag">(ret.)</span>':''; }
 
 // ═══════════════════════════════════════
 // INIT
@@ -950,7 +960,7 @@ function wlLbHTML(lb){
     return `<div class="lb-row">
       <span class="lb-rank ${rc}">${r+1}</span>
       ${avatarHTML(x.p.name,idx,28)}
-      <span style="flex:1;font-size:14px;font-weight:500;">${x.p.name}</span>
+      <span style="flex:1;font-size:14px;font-weight:500;">${x.p.name}${retTag(x.p)}</span>
       <span class="lb-stat">${x.w}W–${x.l}L</span>
       <div class="pct-wrap"><div class="pct-bar" style="width:${pct}%;"></div></div>
       <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;min-width:34px;text-align:right;">${pct}%</span>
@@ -969,7 +979,7 @@ function eloLbHTML(players){
     return `<div class="lb-row">
       <span class="lb-rank ${rc}">${r+1}</span>
       ${avatarHTML(p.name,idx,28)}
-      <span style="flex:1;font-size:14px;font-weight:500;">${p.name}</span>
+      <span style="flex:1;font-size:14px;font-weight:500;">${p.name}${retTag(p)}</span>
       <span class="lb-elo">${elo}</span>
       <span class="lb-delta ${dc}">${diff>=0?'+':''}${diff}</span>
     </div>`;
@@ -1081,25 +1091,81 @@ function renderRoster(){
   // Roster list
   const el=document.getElementById('roster-list');
   if(!state.players.length){ el.innerHTML='<div class="empty">No players yet.</div>'; return; }
-  el.innerHTML=state.players.map((p,i)=>{
-    const gc=playerGameCount(p.id);
-    const flag=flags[p.id];
-    return `<div class="player-row" style="cursor:pointer;" onclick="showPlayerModal(${p.id})">
-      ${avatarHTML(p.name,i)}
+  const active=activePlayers();
+  const retired=state.players.filter(p=>p.retired);
+
+  const activeHTML=active.length
+    ? active.map(p=>{
+        const flag=flags[p.id];
+        return `<div class="player-row" style="cursor:pointer;" onclick="showPlayerModal(${p.id})">
+          ${avatarHTML(p.name,playerIdx(p.id))}
+          <div style="flex:1;">
+            <input class="name-input" type="text" value="${p.name.replace(/"/g,'&quot;')}"
+              onclick="event.stopPropagation()"
+              onblur="updatePName(${p.id},this.value)" onchange="updatePName(${p.id},this.value)" />
+          </div>
+          <span style="font-size:11px;color:var(--muted);">sk</span>
+          <input type="number" class="num-input" min="1" max="10" value="${p.skill}" style="width:54px;"
+            onclick="event.stopPropagation()"
+            onchange="updatePSkill(${p.id},this.value)" />
+          <span class="elo-tag">${p.elo_rating||1000}</span>
+          ${flag?'<span class="badge badge-warning">⚠</span>':''}
+          <button class="btn btn-xs" title="Retire" onclick="event.stopPropagation();retirePlayer(${p.id})">🪑</button>
+        </div>`;
+      }).join('')
+    : '<div class="empty">No active players.</div>';
+
+  const retiredHTML=retired.map(p=>`
+    <div class="player-row retired" style="cursor:pointer;" onclick="showPlayerModal(${p.id})">
+      ${avatarHTML(p.name,playerIdx(p.id))}
       <div style="flex:1;">
-        <input class="name-input" type="text" value="${p.name.replace(/"/g,'&quot;')}"
-          onclick="event.stopPropagation()"
-          onblur="updatePName(${p.id},this.value)" onchange="updatePName(${p.id},this.value)" />
+        <span style="font-size:13px;font-weight:500;">${p.name}</span>
       </div>
-      <span style="font-size:11px;color:var(--muted);">sk</span>
-      <input type="number" class="num-input" min="1" max="10" value="${p.skill}" style="width:54px;"
-        onclick="event.stopPropagation()"
-        onchange="updatePSkill(${p.id},this.value)" />
+      ${skillBadge(p.skill)}
       <span class="elo-tag">${p.elo_rating||1000}</span>
-      ${flag?'<span class="badge badge-warning">⚠</span>':''}
+      <button class="btn btn-xs" onclick="event.stopPropagation();activatePlayer(${p.id})">Activate</button>
       <button class="btn btn-xs btn-danger" onclick="event.stopPropagation();removePlayer(${p.id})">✕</button>
-    </div>`;
-  }).join('');
+    </div>`).join('');
+
+  el.innerHTML=`
+    ${retired.length?'<div class="modal-sec-title" style="padding:4px 0 2px;">Active</div>':''}
+    ${activeHTML}
+    ${retired.length?`
+      <div style="padding:12px 0 ${showRetired?'6px':'2px'};">
+        <button class="btn btn-xs" onclick="toggleRetired()">${showRetired?'Hide':'Show'} ${retired.length} retired player${retired.length!==1?'s':''}</button>
+      </div>
+      <div style="display:${showRetired?'block':'none'};">${retiredHTML}</div>`:''}`;
+}
+
+function toggleRetired(){
+  showRetired=!showRetired;
+  renderRoster();
+}
+
+async function retirePlayer(id){
+  const p=state.players.find(pl=>pl.id===id); if(!p) return;
+  if(!confirm(`Retire ${p.name}? They keep all their stats and history, but leave the active roster and team generation.`)) return;
+  const {error}=await db.from('players').update({retired:true,present:false}).eq('id',id);
+  if(error){ toast('Error retiring player.','err'); console.error(error); return; }
+  p.retired=true; p.present=false;
+  // Drop them from the working (unpublished) teams so the Teams tab stays in sync.
+  // Published teams are left alone — they are a record of who actually played.
+  state.currentNinja=state.currentNinja.filter(i=>i!==id);
+  state.currentMamie=state.currentMamie.filter(i=>i!==id);
+  renderRoster();
+  renderPresentList();
+  renderTeamsOutput();
+  toast(`${p.name} retired.`);
+}
+
+async function activatePlayer(id){
+  const p=state.players.find(pl=>pl.id===id); if(!p) return;
+  const {error}=await db.from('players').update({retired:false}).eq('id',id);
+  if(error){ toast('Error activating player.','err'); console.error(error); return; }
+  p.retired=false;
+  renderRoster();
+  renderPresentList();
+  toast(`${p.name} is back on the roster.`);
 }
 
 function flagCardHTML(f){
@@ -1466,13 +1532,14 @@ function renderTeamsTab(){
 
 function renderPresentList(){
   const el=document.getElementById('present-list');
-  if(!state.players.length){ el.innerHTML='<div class="empty">Add players in Roster first.</div>'; return; }
-  el.innerHTML=state.players.map((p,i)=>{
+  const roster=activePlayers();
+  if(!roster.length){ el.innerHTML=`<div class="empty">${state.players.length?'No active players — everyone is retired.':'Add players in Roster first.'}</div>`; return; }
+  el.innerHTML=roster.map(p=>{
     const gc=playerGameCount(p.id);
     const cs=compositeScore(p,gc).toFixed(2);
     return `<div class="player-row">
       <input type="checkbox" class="toggle" ${p.present?'checked':''} onchange="togglePresent(${p.id},this.checked)" />
-      ${avatarHTML(p.name,i,28)}
+      ${avatarHTML(p.name,playerIdx(p.id),28)}
       <div style="flex:1;">
         <span style="font-size:13px;font-weight:500;">${p.name}</span>
       </div>
@@ -1564,7 +1631,7 @@ function doRandomGeneration(present){
 }
 
 function generateBalanced(){
-  const present=state.players.filter(p=>p.present);
+  const present=presentPlayers();
   if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
   state.affinities={together:[],apart:[]};
   const {groups}=buildTogetherGroups(present);
@@ -1576,14 +1643,14 @@ function generateBalanced(){
 }
 
 function generateRandom(){
-  const present=state.players.filter(p=>p.present);
+  const present=presentPlayers();
   if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
   state.affinities={together:[],apart:[]};
   doRandomGeneration(present);
 }
 
 function rebalanceTeams(){
-  const present=state.players.filter(p=>p.present);
+  const present=presentPlayers();
   if(present.length<2){ toast('Need at least 2 present players.','err'); return; }
   // does NOT reset affinities
   doRandomGeneration(present);
@@ -1752,7 +1819,7 @@ async function onTeamsSessChange(val){
 
 function renderActiveRules(){
   const el=document.getElementById('active-rules'); if(!el) return;
-  const presentIds=new Set(state.players.filter(p=>p.present).map(p=>p.id));
+  const presentIds=new Set(presentPlayers().map(p=>p.id));
   const tr=state.affinities.together.filter(([a,b])=>presentIds.has(a)&&presentIds.has(b));
   const ar=state.affinities.apart.filter(([a,b])=>presentIds.has(a)&&presentIds.has(b));
   if(!tr.length&&!ar.length){ el.style.display='none'; el.innerHTML=''; return; }
@@ -2256,10 +2323,11 @@ function showPlayerModal(id){
       ${avatarHTML(p.name,idx,48)}
       <div>
         <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;">${p.name}</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;">
           ${skillBadge(p.skill)}
           <span class="lb-elo">${elo}</span>
           <span style="font-size:12px;color:${eColor};">${eStr} from start</span>
+          ${p.retired?'<span class="badge badge-retired">Retired</span>':''}
         </div>
       </div>
     </div>
@@ -2312,7 +2380,7 @@ function renderStatsTab(){
   const prevElo=eloSel.value;
   eloSel.innerHTML='<option value="">Select player...</option>'+
     state.players.filter(p=>playerGameCount(p.id)>0)
-      .map(p=>`<option value="${p.id}"${prevElo==p.id?' selected':''}>${p.name}</option>`).join('');
+      .map(p=>`<option value="${p.id}"${prevElo==p.id?' selected':''}>${p.name}${p.retired?' (retired)':''}</option>`).join('');
   if(prevElo&&eloSel.value===prevElo) renderEloChart();
   // Duos
   document.getElementById('adm-duo-list').innerHTML=duoListHTML(buildDuos());
@@ -2349,7 +2417,7 @@ function renderStatsTable(){
     const diffColor=r.diff==null?'color:var(--muted)':r.diff>0?'color:var(--success)':r.diff<0?'color:var(--danger)':'color:var(--muted)';
     const diffStr=r.diff==null?'—':r.diff>0?`+${r.diff}`:r.diff<0?`\u2212${Math.abs(r.diff)}`:'0';
     return `<tr>
-      <td><div style="display:flex;align-items:center;gap:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}</span></div></td>
+      <td><div style="display:flex;align-items:center;gap:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
       <td style="font-family:'DM Mono',monospace;">${r.gc}</td>
       <td style="font-family:'DM Mono',monospace;">${r.w}–${r.l}</td>
       <td style="font-family:'DM Mono',monospace;">${r.pct}%</td>
