@@ -142,6 +142,7 @@ input[type=number]{width:auto;}
 .badge-retired{background:#ECECEC;color:var(--muted);}
 .elo-tag{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);flex-shrink:0;}
 .ret-tag{font-size:11px;font-style:italic;color:var(--muted);margin-left:5px;font-weight:400;}
+.rank-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;flex-shrink:0;}
 .player-row.retired{opacity:.55;}
 
 /* LEADERBOARD */
@@ -459,11 +460,14 @@ input[type=number]{width:auto;}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <div class="sec-title" style="margin-bottom:0;">Player stats</div>
-      <select id="adm-season-sel" onchange="renderStatsTable()" style="width:auto;font-size:13px;padding:6px 10px;"></select>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-sm" onclick="recalcEloButton(this)" title="Replay all games with current skill values">↻ Recalculate Elo</button>
+        <select id="adm-season-sel" onchange="renderStatsTable()" style="width:auto;font-size:13px;padding:6px 10px;"></select>
+      </div>
     </div>
     <div class="card" style="overflow-x:auto;padding:16px 8px;">
       <table class="stats-tbl">
-        <thead><tr><th>Player</th><th>G</th><th>W-L</th><th>W%</th><th>Elo</th><th>±5g</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
+        <thead><tr><th>Player</th><th>Rank</th><th>G</th><th>W-L</th><th>W%</th><th>Elo</th><th>±5g</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
         <tbody id="stats-tbody"></tbody>
       </table>
     </div>
@@ -500,10 +504,144 @@ const SUPABASE_KEY = 'sb_publishable__QcOaH84nhIkOcJpUjkq8A_yLsj7eJL';
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const K = 32;
-const MARGIN_CAP = 1.75;
-const SKILL_ADJ_MAX = 1.3;
-const SKILL_ADJ_MIN = 0.7;
+// ═══════════════════════════════════════
+// ELO v2 + RANKED TIERS
+// ═══════════════════════════════════════
+// Skill sets a player's starting rating; after that, results decide.
+// Every recalculation replays all games with CURRENT skill values,
+// so set skills once and leave them.
+const ELO = {
+  START: 1000,
+  SKILL_SEED_STEP: 40,    // start = 1000 + (skill - 5) * 40  (skill 9 -> 1160, skill 2 -> 880)
+  K: 24,                  // settled players
+  K_PROVISIONAL: 36,      // first PROVISIONAL_GAMES games
+  PROVISIONAL_GAMES: 10,
+  MARGIN_COEF: 0.15,
+  MARGIN_CAP: 1.75,
+};
+
+function seedRating(player){
+  return ELO.START + ((player.skill ?? 5) - 5) * ELO.SKILL_SEED_STEP;
+}
+
+// Margin bonus, damped when a favourite wins big and boosted when an underdog does.
+function marginMultiplier(pointDiff, winnerEdge){
+  if(!pointDiff) return 1;
+  const damp = 2.2 / (Math.max(-400, winnerEdge) * 0.001 + 2.2);
+  return Math.min(ELO.MARGIN_CAP, 1 + ELO.MARGIN_COEF * Math.log(1 + pointDiff) * damp);
+}
+
+// Pure replay of every game, oldest first. No DB access.
+function replayElo(players, games){
+  const rating = new Map();
+  const played = new Map();
+  for(const p of players){ rating.set(p.id, seedRating(p)); played.set(p.id, 0); }
+  const history = [];
+  const sorted = [...games].sort((a,b) =>
+    (new Date(a.created_at) - new Date(b.created_at)) || (a.id - b.id));
+  for(const g of sorted){
+    const n = (g.ninja_ids || []).map(Number).filter(id => rating.has(id));
+    const m = (g.mamie_ids || []).map(Number).filter(id => rating.has(id));
+    if(!n.length || !m.length) continue;
+    const avg = ids => ids.reduce((s,id) => s + rating.get(id), 0) / ids.length;
+    const nAvg = avg(n), mAvg = avg(m);
+    const nExp = eloExpected(nAvg, mAvg);
+    const nActual = g.winner === 'ninja' ? 1 : g.winner === 'draw' ? 0.5 : 0;
+    const scored = g.score_ninja != null && g.score_mamie != null;
+    const diff = scored ? Math.abs(g.score_ninja - g.score_mamie) : 0;
+    const winnerEdge = g.winner === 'ninja' ? nAvg - mAvg : g.winner === 'mamie' ? mAvg - nAvg : 0;
+    const mult = g.winner === 'draw' ? 1 : marginMultiplier(diff, winnerEdge);
+    const apply = (ids, actual, expected) => {
+      for(const id of ids){
+        const before = rating.get(id);
+        const k = played.get(id) < ELO.PROVISIONAL_GAMES ? ELO.K_PROVISIONAL : ELO.K;
+        const change = Math.round(k * (actual - expected) * mult);
+        rating.set(id, before + change);
+        played.set(id, played.get(id) + 1);
+        history.push({game_id:g.id, player_id:id, rating_before:before, rating_after:before+change, change});
+      }
+    };
+    apply(n, nActual, nExp);
+    apply(m, 1 - nActual, 1 - nExp);
+  }
+  return { rating, history };
+}
+
+const TIERS = [
+  { name:'Iron',     min:-Infinity, icon:'🪨', divisions:false, bg:'#ECEAE7', fg:'#5A5550' },
+  { name:'Bronze',   min:875,       icon:'🥉', divisions:true,  bg:'#F6E9E1', fg:'#7A4A30' },
+  { name:'Silver',   min:950,       icon:'🥈', divisions:true,  bg:'#EEF1F4', fg:'#55606B' },
+  { name:'Gold',     min:1025,      icon:'🥇', divisions:true,  bg:'#FDF3E0', fg:'#8A5A12' },
+  { name:'Platinum', min:1100,      icon:'💠', divisions:true,  bg:'#E3F4F4', fg:'#1D6B6B' },
+  { name:'Diamond',  min:1175,      icon:'💎', divisions:true,  bg:'#E8F1FB', fg:'#0D3D72' },
+  { name:'Ace',      min:1250,      icon:'🏐', divisions:false, bg:'#1A2332', fg:'#FFFFFF' },
+];
+
+const RANK = {
+  DIV_SIZE: 25,           // III / II / I
+  DEMOTION_BUFFER: 10,    // must fall 10 below a tier floor to drop
+  PLACEMENT_GAMES: 10,
+  PROMO_WATCH: 10,        // within 10 of the next tier
+};
+
+function rawTierIdx(elo){
+  let idx = 0;
+  for(let i = 0; i < TIERS.length; i++) if(elo >= TIERS[i].min) idx = i;
+  return idx;
+}
+
+function divisionLabel(elo, tierIdx){
+  const t = TIERS[tierIdx];
+  if(!t.divisions) return null;
+  const step = Math.floor((elo - t.min) / RANK.DIV_SIZE);
+  return ['III','II','I'][Math.max(0, Math.min(2, step))];
+}
+
+// Walks the player's Elo history so the demotion shield and peak work without extra storage.
+function computeRank(player){
+  const hist = state.eloHistory.filter(h => h.player_id === player.id).sort((a,b) => a.id - b.id);
+  if(hist.length < RANK.PLACEMENT_GAMES){
+    return { status:'placement', played:hist.length, label:`Unranked ${hist.length}/${RANK.PLACEMENT_GAMES}` };
+  }
+  let tier = null, peakTier = 0;
+  for(let i = RANK.PLACEMENT_GAMES - 1; i < hist.length; i++){
+    const elo = hist[i].rating_after;
+    const raw = rawTierIdx(elo);
+    if(tier === null || raw > tier) tier = raw;
+    else if(raw < tier && elo < TIERS[tier].min - RANK.DEMOTION_BUFFER) tier = raw;
+    peakTier = Math.max(peakTier, tier);
+  }
+  const elo = hist[hist.length - 1].rating_after;
+  const t = TIERS[tier];
+  const division = divisionLabel(elo, tier);
+  const next = TIERS[tier + 1];
+  return {
+    status: player.retired ? 'legend' : 'ranked',
+    tierIdx: tier, tier: t.name, icon: t.icon, division,
+    label: division ? `${t.name} ${division}` : t.name,
+    elo,
+    shielded: elo < t.min,
+    promoWatch: !!next && elo < next.min && next.min - elo <= RANK.PROMO_WATCH,
+    peakTierIdx: peakTier,
+    peakLabel: TIERS[peakTier].name,
+  };
+}
+
+function rankBadgeHTML(rank){
+  if(rank.status === 'placement'){
+    return `<span class="rank-badge" style="background:#F2F2F2;color:var(--muted);" title="Plays ${RANK.PLACEMENT_GAMES} games before getting a rank">❔ ${rank.label}</span>`;
+  }
+  if(rank.status === 'legend'){
+    const pt = TIERS[rank.peakTierIdx];
+    return `<span class="rank-badge" style="background:${pt.bg};color:${pt.fg};" title="Retired. Peak rank: ${pt.name}">${pt.icon} Legend</span>`;
+  }
+  const t = TIERS[rank.tierIdx];
+  const flair = rank.promoWatch ? ' 🔥' : rank.shielded ? ' 🛡️' : '';
+  const tip = rank.promoWatch ? 'Promo watch: close to the next tier'
+            : rank.shielded ? 'Demotion shield: just below this tier'
+            : `Peak: ${rank.peakLabel}`;
+  return `<span class="rank-badge" style="background:${t.bg};color:${t.fg};" title="${tip}">${t.icon} ${rank.label}${flair}</span>`;
+}
 
 // ═══════════════════════════════════════
 // STATE
@@ -973,15 +1111,13 @@ function eloLbHTML(players){
   return players.map((p,r)=>{
     const idx=playerIdx(p.id);
     const elo=p.elo_rating||1000;
-    const diff=elo-1000;
     const rc=r===0?'r1':r===1?'r2':r===2?'r3':'';
-    const dc=diff>0?'pos':diff<0?'neg':'';
     return `<div class="lb-row">
       <span class="lb-rank ${rc}">${r+1}</span>
       ${avatarHTML(p.name,idx,28)}
-      <span style="flex:1;font-size:14px;font-weight:500;">${p.name}${retTag(p)}</span>
-      <span class="lb-elo">${elo}</span>
-      <span class="lb-delta ${dc}">${diff>=0?'+':''}${diff}</span>
+      <span style="flex:1;font-size:14px;font-weight:500;min-width:0;">${p.name}${retTag(p)}</span>
+      ${rankBadgeHTML(computeRank(p))}
+      <span class="lb-elo" style="min-width:38px;text-align:right;">${elo}</span>
     </div>`;
   }).join('');
 }
@@ -1050,7 +1186,7 @@ async function addPlayer(btn){
   const skill=Math.min(10,Math.max(1,parseInt(document.getElementById('new-skill').value)||5));
   if(!name){ toast('Enter a player name.','err'); return; }
   setLoading(btn,true);
-  const {data,error}=await db.from('players').insert({name,skill,present:true,elo_rating:1000}).select().single();
+  const {data,error}=await db.from('players').insert({name,skill,present:true,elo_rating:seedRating({skill})}).select().single();
   setLoading(btn,false);
   if(error){ toast('Error adding player.','err'); console.error(error); return; }
   state.players.push(data);
@@ -1080,6 +1216,7 @@ async function updatePSkill(id,val){
   const skill=Math.min(10,Math.max(1,parseInt(val)||5));
   await db.from('players').update({skill}).eq('id',id);
   const p=state.players.find(pl=>pl.id===id); if(p) p.skill=skill;
+  toast('Skill saved. Use "Recalculate Elo" in Stats to apply it.');
 }
 
 function renderRoster(){
@@ -1487,7 +1624,10 @@ async function saveGameEdit(id){
   const winner=document.querySelector(`input[name="eg-w-${id}"]:checked`)?.value;
   if(!winner){ toast('Select a winner.','err'); return; }
   const existingGame=state.games.find(x=>x.id===id);
-  const outcomeChanged=existingGame&&existingGame.winner!==winner;
+  const newSn=sn!==''?parseInt(sn):null;
+  const newSm=sm!==''?parseInt(sm):null;
+  // Score affects the margin bonus, so a score change also needs a recalculation
+  const outcomeChanged=existingGame&&(existingGame.winner!==winner||existingGame.score_ninja!==newSn||existingGame.score_mamie!==newSm);
   const btn=document.getElementById('eg-save-'+id);
   setLoading(btn,true);
   const {error}=await db.from('games').update({
@@ -1964,12 +2104,10 @@ async function recordGame(btn){
     }).select().single();
     if(error) throw error;
     state.games.unshift(game);
-    await applyEloChanges(game);
+    // One code path for Elo: replay everything (instant at this scale)
+    await recalculateAllElo();
     await updateDuoStats(game);
     await updateH2H(game);
-    // Refresh elo_history from DB
-    const {data:hist}=await db.from('elo_history').select('*').order('id');
-    state.eloHistory=hist||[];
     // Refresh duo stats
     const {data:ds}=await db.from('duo_stats').select('*');
     state.duoStats=ds||[];
@@ -1985,116 +2123,41 @@ async function recordGame(btn){
   }
 }
 
-async function applyEloChanges(game){
-  const ninjaIds=game.ninja_ids||[];
-  const mamieIds=game.mamie_ids||[];
-  const ninjas=ninjaIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  const mamies=mamieIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-  if(!ninjas.length||!mamies.length) return;
-
-  // Use composite score (×1000 to keep Elo formula scale) per spec
-  const nAvgCs=ninjas.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/ninjas.length;
-  const mAvgCs=mamies.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/mamies.length;
-  const nExp=eloExpected(nAvgCs*1000,mAvgCs*1000);
-  const mExp=1-nExp;
-  const nActual=game.winner==='ninja'?1:game.winner==='draw'?0.5:0;
-  const mActual=1-nActual;
-  const nAvgSk=ninjas.reduce((s,p)=>s+(p.skill||5),0)/ninjas.length;
-  const mAvgSk=mamies.reduce((s,p)=>s+(p.skill||5),0)/mamies.length;
-
-  const pointDiff=(game.score_ninja!=null&&game.score_mamie!=null)?Math.abs(game.score_ninja-game.score_mamie):0;
-  const marginMult=Math.min(MARGIN_CAP,1+0.15*Math.log(1+pointDiff));
-
-  const histRows=[];
-  const updates=[];
-
-  const proc=(players, actual, expected, teamAvgSk)=>{
-    for(const p of players){
-      const before=p.elo_rating||1000;
-      const skillDiff=(p.skill||5)-teamAvgSk;
-      const skillAdj=Math.min(SKILL_ADJ_MAX,Math.max(SKILL_ADJ_MIN,1+0.3*(skillDiff/10)));
-      const change=Math.round(K*(actual-expected)*marginMult*skillAdj);
-      const eloFloor=700+(p.skill||5)*30;
-      const eloCeiling=1030+(p.skill||5)*40;
-      const after=Math.min(eloCeiling,Math.max(eloFloor,before+change));
-      histRows.push({game_id:game.id,player_id:p.id,rating_before:before,rating_after:after,change:after-before});
-      updates.push({id:p.id,elo_rating:after});
-      const lp=state.players.find(x=>x.id===p.id); if(lp) lp.elo_rating=after;
-    }
-  };
-
-  proc(ninjas,nActual,nExp,nAvgSk);
-  proc(mamies,mActual,mExp,mAvgSk);
-
-  await db.from('elo_history').insert(histRows);
-  for(const u of updates){
-    await db.from('players').update({elo_rating:u.elo_rating}).eq('id',u.id);
-  }
-}
-
 async function recalculateAllElo(){
-  // Reset all player ELOs to 1000 in memory
-  for(const p of state.players) p.elo_rating=1000;
-
-  // Replay games in chronological order
-  const sortedGames=[...state.games].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
-
-  // Track cumulative game count per player (mirrors original recording behaviour)
-  const gcMap={};
-  state.players.forEach(p=>gcMap[p.id]=0);
-
-  const allHistRows=[];
-
-  for(const game of sortedGames){
-    const ninjaIds=game.ninja_ids||[];
-    const mamieIds=game.mamie_ids||[];
-    [...ninjaIds,...mamieIds].forEach(id=>{ if(gcMap[id]!==undefined) gcMap[id]++; });
-    const ninjas=ninjaIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-    const mamies=mamieIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-    if(!ninjas.length||!mamies.length) continue;
-
-    const nAvgCs=ninjas.reduce((s,p)=>s+compositeScore(p,gcMap[p.id]||1),0)/ninjas.length;
-    const mAvgCs=mamies.reduce((s,p)=>s+compositeScore(p,gcMap[p.id]||1),0)/mamies.length;
-    const nExp=eloExpected(nAvgCs*1000,mAvgCs*1000);
-    const mExp=1-nExp;
-    const nActual=game.winner==='ninja'?1:game.winner==='draw'?0.5:0;
-    const mActual=1-nActual;
-    const nAvgSk=ninjas.reduce((s,p)=>s+(p.skill||5),0)/ninjas.length;
-    const mAvgSk=mamies.reduce((s,p)=>s+(p.skill||5),0)/mamies.length;
-
-    const pointDiff=(game.score_ninja!=null&&game.score_mamie!=null)?Math.abs(game.score_ninja-game.score_mamie):0;
-    const marginMult=Math.min(MARGIN_CAP,1+0.15*Math.log(1+pointDiff));
-
-    const proc=(players,actual,expected,teamAvgSk)=>{
-      for(const p of players){
-        const lp=state.players.find(x=>x.id===p.id);
-        const before=(lp?lp.elo_rating:null)||1000;
-        const skillDiff=(p.skill||5)-teamAvgSk;
-        const skillAdj=Math.min(SKILL_ADJ_MAX,Math.max(SKILL_ADJ_MIN,1+0.3*(skillDiff/10)));
-        const change=Math.round(K*(actual-expected)*marginMult*skillAdj);
-        const eloFloor=700+(p.skill||5)*30;
-        const eloCeiling=1030+(p.skill||5)*40;
-        const after=Math.min(eloCeiling,Math.max(eloFloor,before+change));
-        allHistRows.push({game_id:game.id,player_id:p.id,rating_before:before,rating_after:after,change:after-before});
-        if(lp) lp.elo_rating=after;
-      }
-    };
-    proc(ninjas,nActual,nExp,nAvgSk);
-    proc(mamies,mActual,mExp,mAvgSk);
-  }
+  const { rating, history } = replayElo(state.players, state.games);
+  for(const p of state.players) p.elo_rating = rating.get(p.id);
 
   // Rebuild elo_history table
-  await db.from('elo_history').delete().not('id','is',null);
-  if(allHistRows.length) await db.from('elo_history').insert(allHistRows);
-
-  // Persist updated ELOs
-  for(const p of state.players){
-    await db.from('players').update({elo_rating:p.elo_rating}).eq('id',p.id);
+  const {error:delErr}=await db.from('elo_history').delete().not('id','is',null);
+  if(delErr) throw delErr;
+  if(history.length){
+    const {error:insErr}=await db.from('elo_history').insert(history);
+    if(insErr) throw insErr;
   }
+
+  // Persist updated ratings
+  await Promise.all(state.players.map(p=>
+    db.from('players').update({elo_rating:p.elo_rating}).eq('id',p.id)
+  ));
 
   // Refresh local elo_history
   const {data:hist}=await db.from('elo_history').select('*').order('id');
   state.eloHistory=hist||[];
+}
+
+async function recalcEloButton(btn){
+  if(!confirm('Recalculate every Elo rating from the full game history using current skill values?')) return;
+  setLoading(btn,true);
+  try{
+    await recalculateAllElo();
+    renderStatsTab();
+    renderPublic();
+    toast('Elo recalculated. Ranks updated.');
+  } catch(e){
+    console.error(e); toast('Recalculation failed. Try again.','err');
+  } finally {
+    setLoading(btn,false);
+  }
 }
 
 async function updateDuoStats(game){
@@ -2288,7 +2351,8 @@ function showPlayerModal(id){
   const w=playerWins(id);
   const pct=gc>0?Math.round(w/gc*100):0;
   const elo=p.elo_rating||1000;
-  const eloDiff=elo-1000;
+  const eloDiff=elo-seedRating(p);
+  const rank=computeRank(p);
   const hist5=state.eloHistory.filter(h=>h.player_id===id).slice(-5);
   const d5=hist5.reduce((s,h)=>s+h.change,0);
   const eColor=eloDiff>0?'var(--success)':eloDiff<0?'var(--danger)':'var(--muted)';
@@ -2330,6 +2394,12 @@ function showPlayerModal(id){
           ${p.retired?'<span class="badge badge-retired">Retired</span>':''}
         </div>
       </div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <div class="modal-sec-title">Rank</div>
+      <div class="modal-stat-row"><span>Current</span>${rankBadgeHTML(rank)}</div>
+      ${rank.status!=='placement'?`<div class="modal-stat-row"><span>Peak</span><span style="font-weight:600;">${TIERS[rank.peakTierIdx].icon} ${rank.peakLabel}</span></div>`:''}
+      ${rank.status==='ranked'&&TIERS[rank.tierIdx+1]?`<div class="modal-stat-row"><span>To ${TIERS[rank.tierIdx+1].name}</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${Math.max(0,TIERS[rank.tierIdx+1].min-rank.elo)} Elo</span></div>`:''}
     </div>
     <div style="margin-bottom:16px;">
       <div class="modal-sec-title">Season stats</div>
@@ -2410,7 +2480,7 @@ function renderStatsTable(){
     const diff=sgc?pf-pa:null;
     return {p,gc,w,l,pct,elo,d5,pf,pa,diff};
   }).filter(Boolean).sort((a,b)=>b.w-a.w);
-  if(!rows.length){ tbody.innerHTML='<tr><td colspan="9"><div class="empty">No data yet.</div></td></tr>'; return; }
+  if(!rows.length){ tbody.innerHTML='<tr><td colspan="10"><div class="empty">No data yet.</div></td></tr>'; return; }
   tbody.innerHTML=rows.map(r=>{
     const idx=playerIdx(r.p.id);
     const dc=r.d5>0?'color:var(--success)':r.d5<0?'color:var(--danger)':'color:var(--muted)';
@@ -2418,6 +2488,7 @@ function renderStatsTable(){
     const diffStr=r.diff==null?'—':r.diff>0?`+${r.diff}`:r.diff<0?`\u2212${Math.abs(r.diff)}`:'0';
     return `<tr>
       <td><div style="display:flex;align-items:center;gap:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
+      <td>${rankBadgeHTML(computeRank(r.p))}</td>
       <td style="font-family:'DM Mono',monospace;">${r.gc}</td>
       <td style="font-family:'DM Mono',monospace;">${r.w}–${r.l}</td>
       <td style="font-family:'DM Mono',monospace;">${r.pct}%</td>
