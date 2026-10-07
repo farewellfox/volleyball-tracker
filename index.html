@@ -686,7 +686,7 @@ function replayElo(players, games, sessions){
 }
 
 const TIERS = [
-  { name:'Iron',     min:-Infinity, icon:'🪨', divisions:false, bg:'#ECEAE7', fg:'#5A5550', band:'#F1EFEC' },
+  { name:'Iron',     min:-Infinity, base:800, icon:'🪨', divisions:true, bg:'#ECEAE7', fg:'#5A5550', band:'#F1EFEC' },
   { name:'Bronze',   min:875,       icon:'🥉', divisions:true,  bg:'#F6E9E1', fg:'#7A4A30', band:'#F9EFE8' },
   { name:'Silver',   min:950,       icon:'🥈', divisions:true,  bg:'#EEF1F4', fg:'#55606B', band:'#F2F4F6' },
   { name:'Gold',     min:1025,      icon:'🥇', divisions:true,  bg:'#FDF3E0', fg:'#8A5A12', band:'#FDF6E8' },
@@ -712,7 +712,7 @@ function rawTierIdx(elo){
 function divisionLabel(elo, tierIdx){
   const t = TIERS[tierIdx];
   if(!t.divisions) return null;
-  const step = Math.floor((elo - t.min) / RANK.DIV_SIZE);
+  const step = Math.floor((elo - (t.base ?? t.min)) / RANK.DIV_SIZE);
   return ['III','II','I'][Math.max(0, Math.min(2, step))];
 }
 
@@ -802,13 +802,9 @@ function rankProgress(rank){
     const above = Math.max(0, Math.round((elo - t.min) / RANK.DIV_SIZE * 100));
     return { pct: 100, short: `+${above}`, long: `${above} RP above the Ace line` };
   }
-  if(!t.divisions){                 // Iron: distance to Bronze, on a 300 RP scale
-    const nextMin = TIERS[rank.tierIdx + 1].min;
-    const toGo = Math.max(0, Math.ceil((nextMin - elo) / RANK.DIV_SIZE * 100));
-    return { pct: Math.max(0, 100 - toGo / 3), short: `−${toGo}`, long: `${toGo} RP to Bronze III` };
-  }
-  const step = Math.max(0, Math.min(2, Math.floor((elo - t.min) / RANK.DIV_SIZE)));
-  const divMin = t.min + step * RANK.DIV_SIZE;
+  const base = t.base ?? t.min;      // Iron's divisions count up from 800
+  const step = Math.max(0, Math.min(2, Math.floor((elo - base) / RANK.DIV_SIZE)));
+  const divMin = base + step * RANK.DIV_SIZE;
   const rp = rank.shielded ? 0 : Math.max(0, Math.min(99, Math.floor((elo - divMin) / RANK.DIV_SIZE * 100)));
   const nextLabel = step < 2 ? `${t.name} ${['II','I'][step]}` : `${TIERS[rank.tierIdx + 1].name}${TIERS[rank.tierIdx + 1].divisions ? ' III' : ''}`;
   return { pct: rp, short: `${rp}`, long: `${rp} RP · ${100 - rp} to ${nextLabel}` };
@@ -2583,7 +2579,7 @@ function showRanksInfo(){
       ${tierIconHTML(t)}
       <div>
         <div class="ladder-name">${t.name}</div>
-        <div class="ladder-meta">${t.divisions ? 'Divisions III → II → I' : t.name==='Ace' ? 'The top. No divisions' : 'The starting climb'}</div>
+        <div class="ladder-meta">${t.divisions ? 'Divisions III → II → I' : 'The top. No divisions'}</div>
       </div>
       <span class="ladder-count">${counts[i] ? counts[i] + (counts[i]===1?' player':' players') : ''}</span>
     </div>`).join('');
