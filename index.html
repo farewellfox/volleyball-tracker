@@ -284,6 +284,21 @@ tr.clickable:hover td{background:rgba(255,255,255,.03);}
 .rel-name{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .rel-v{font-weight:600;}
 
+/* TONIGHT */
+.tn-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:6px;}
+.tn-title{font-family:var(--display);font-weight:900;font-size:28px;letter-spacing:.03em;text-transform:uppercase;line-height:1.05;}
+.tn-sub{font-size:13px;color:var(--muted);margin-top:3px;}
+.tn-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;}
+.tn-step-h{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:900;font-size:22px;letter-spacing:.04em;text-transform:uppercase;margin:22px 0 10px;}
+.tn-num{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--accent);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
+.tn-count{font-family:'Barlow',sans-serif;font-size:13px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted);}
+.tn-games{display:flex;flex-direction:column;margin-top:12px;}
+.tn-game{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid var(--border);font-size:14px;}
+.tn-game .n{color:var(--dim);font-weight:700;width:22px;}
+.tn-game .sc{font-family:var(--display);font-weight:900;font-size:20px;}
+.tn-game .w{margin-left:auto;}
+.tn-muted{font-size:13px;color:var(--muted);padding:14px 2px;}
+
 /* RECAPS */
 .records{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:22px;}
 .record{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;display:flex;flex-direction:column;gap:2px;min-width:0;}
@@ -488,15 +503,14 @@ tr.clickable:hover td{background:rgba(255,255,255,.03);}
     </div>
   </div>
   <div class="tabs">
-    <button class="tab active" onclick="adminTab('roster',this)">Roster</button>
+    <button class="tab active" onclick="adminTab('tonight',this)">Tonight</button>
+    <button class="tab" onclick="adminTab('roster',this)">Roster</button>
     <button class="tab" onclick="adminTab('sessions',this)">Sessions</button>
-    <button class="tab" onclick="adminTab('teams',this)">Teams</button>
-    <button class="tab" onclick="adminTab('record',this)">Record</button>
     <button class="tab" onclick="adminTab('stats',this)">Stats</button>
   </div>
 
   <!-- ROSTER -->
-  <div id="adm-roster" class="section active">
+  <div id="adm-roster" class="section">
     <div class="sec-title">Player roster</div>
     <div class="card">
       <div class="form-row">
@@ -542,72 +556,43 @@ tr.clickable:hover td{background:rgba(255,255,255,.03);}
     <div id="sessions-list"></div>
   </div>
 
-  <!-- TEAMS -->
+  <!-- TONIGHT: session → who's here → teams → record -->
   <!-- published_teams: multiple rows per session allowed; always insert on publish; read most recent by updated_at desc -->
-  <div id="adm-teams" class="section">
-    <div class="card" style="margin-bottom:8px;padding:12px 16px;">
-      <label class="form-label">Session</label>
-      <select id="teams-sess-sel" style="width:100%;" onchange="onTeamsSessChange(this.value)">
-        <option value="">Select a session...</option>
-      </select>
-    </div>
-    <div class="sec-title" style="margin-top:16px;">Who's playing?</div>
-    <div class="card" style="padding:8px;">
-      <div id="present-list"></div>
-    </div>
-    <div style="display:flex;gap:8px;margin-bottom:16px;">
-      <button class="btn btn-primary" style="flex:1;" onclick="generateBalanced()">⚖️ Balanced</button>
-      <button class="btn btn-primary" style="flex:1;" onclick="generateRandom()">🎲 Random</button>
-      <button class="btn" onclick="rebalanceTeams()" title="Rebalance (keeps rules)">↺</button>
-    </div>
-    <div id="affinity-warning" class="notice notice-warn" style="display:none;">
-      <span style="flex:1;">⚠ Some affinity rules could not be satisfied and were skipped.</span>
-      <button class="btn btn-xs" onclick="document.getElementById('affinity-warning').style.display='none'">✕</button>
-    </div>
-    <div id="loaded-teams-banner" class="notice notice-info" style="display:none;">
-      <span style="flex:1;">Showing last published teams for this session. Regenerate to create new ones.</span>
-      <button class="btn btn-xs" onclick="document.getElementById('loaded-teams-banner').style.display='none'">✕</button>
-    </div>
-    <div id="teams-output"></div>
-    <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-8px 0 8px;display:none;">⠿ Drag players &nbsp;·&nbsp; Right-click for options</div>
-    <div id="active-rules" style="display:none;margin-bottom:12px;"></div>
-    <div id="pred-card" style="display:none;margin-top:4px;"></div>
-    <div id="teams-actions" style="display:none;margin-top:12px;">
-      <button class="btn btn-success btn-full" id="publish-teams-btn" onclick="publishTeams(this)">📣 Publish teams</button>
-    </div>
-  </div>
+  <div id="adm-tonight" class="section active">
+    <div id="tn-session"></div>
 
-  <!-- RECORD GAME -->
-  <div id="adm-record" class="section">
-    <div class="sec-title">Record a game</div>
-    <div class="card">
-      <label class="form-label">Session</label>
-      <select id="record-sess-sel" style="width:100%;margin-bottom:0;"></select>
-    </div>
-    <div id="record-no-teams" class="empty" style="display:none;">Generate teams in the Teams tab first.</div>
-    <div id="record-form" style="display:none;">
-      <div id="record-teams-preview"></div>
-      <div class="card">
-        <div class="metrics-2" style="margin-bottom:0;">
-          <div>
-            <div class="score-label" style="color:var(--blue-dark);">🥷 Ninja Warriors</div>
-            <input type="number" id="score-ninja" class="score-input" placeholder="0" min="0" style="width:100%;" />
-          </div>
-          <div>
-            <div class="score-label" style="color:var(--pink-dark);">💅 Les mamies</div>
-            <input type="number" id="score-mamie" class="score-input" placeholder="0" min="0" style="width:100%;" />
-          </div>
-        </div>
+    <div id="tn-steps">
+      <div class="tn-step-h" style="flex-wrap:wrap;row-gap:6px;"><span class="tn-num">1</span><span style="white-space:nowrap;">Who's here</span><span class="tn-count" id="tn-count" style="white-space:nowrap;"></span>
+        <span style="margin-left:auto;display:flex;gap:6px;">
+          <button class="btn btn-xs" onclick="setAllPresent(true)">All</button>
+          <button class="btn btn-xs" onclick="setAllPresent(false)">None</button>
+        </span>
       </div>
-      <div class="card">
-        <div class="card-sub">Winner</div>
-        <div class="win-btns">
-          <button class="win-btn" id="win-ninja" onclick="selectWinner('ninja')">🥷 Ninja Warriors</button>
-          <button class="win-btn" id="win-mamie" onclick="selectWinner('mamie')">💅 Les mamies</button>
-          <button class="win-btn" id="win-draw" onclick="selectWinner('draw')">🤝 Draw</button>
-        </div>
+      <div class="card" style="padding:6px;"><div id="present-list"></div></div>
+
+      <div class="tn-step-h"><span class="tn-num">2</span>Teams</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="makeTeams('balanced')" title="Closest to 50/50 out of every possible split">Balanced</button>
+        <button class="btn" style="flex:1;" onclick="makeTeams('shuffle')" title="A different fair split (47–53%)">Shuffle</button>
       </div>
-      <button class="btn btn-primary btn-full" id="save-btn" onclick="recordGame(this)">Save game</button>
+      <div id="affinity-warning" class="notice notice-warn" style="display:none;">
+        <span style="flex:1;">Some together/apart rules couldn't all be met, so they were ignored for this split.</span>
+        <button class="btn btn-xs" onclick="document.getElementById('affinity-warning').style.display='none'">✕</button>
+      </div>
+      <div id="loaded-teams-banner" class="notice notice-info" style="display:none;">
+        <span style="flex:1;">Showing the teams already published for this session.</span>
+        <button class="btn btn-xs" onclick="document.getElementById('loaded-teams-banner').style.display='none'">✕</button>
+      </div>
+      <div id="teams-output"></div>
+      <div id="teams-hint" style="text-align:center;font-size:13px;color:var(--muted);margin:-6px 0 10px;display:none;">Drag players to swap · Right-click a player for together/apart rules</div>
+      <div id="active-rules" style="display:none;margin-bottom:12px;"></div>
+      <div id="pred-card" style="display:none;margin-top:4px;"></div>
+      <div id="teams-actions" style="display:none;margin:12px 0 4px;">
+        <button class="btn btn-success btn-full" id="publish-teams-btn" onclick="publishTeams(this)">Publish teams</button>
+      </div>
+
+      <div class="tn-step-h"><span class="tn-num">3</span>Record games</div>
+      <div id="tn-record"></div>
     </div>
   </div>
 
@@ -1310,8 +1295,7 @@ function adminTab(t, btn){
   document.getElementById('adm-'+t).classList.add('active');
   if(t==='roster') renderRoster();
   if(t==='sessions') renderSessions();
-  if(t==='teams') renderTeamsTab();
-  if(t==='record') renderRecordTab();
+  if(t==='tonight') renderTonight();
   if(t==='stats') renderStatsTab();
 }
 
@@ -1755,7 +1739,7 @@ function renderPubRecaps(){
 // ADMIN INIT
 // ═══════════════════════════════════════
 function renderAdmin(){
-  renderRoster(); renderSessions(); renderTeamsTab(); renderRecordTab();
+  renderRoster(); renderSessions(); renderTonight();
 }
 
 // ═══════════════════════════════════════
@@ -1976,6 +1960,7 @@ function renderSessions(){
   // Update season datalist
   const seasons=[...new Set(state.sessions.map(s=>s.season))];
   document.getElementById('season-list').innerHTML=seasons.map(s=>`<option value="${s}">`).join('');
+  const sIn=document.getElementById('new-sess-season'); if(sIn&&!sIn.value) sIn.value=latestSeason();
   const el=document.getElementById('sessions-list');
   if(!state.sessions.length){ el.innerHTML='<div class="empty">No sessions yet.</div>'; return; }
   const td=todayStr();
@@ -2244,41 +2229,218 @@ async function deleteGame(id){
 // ═══════════════════════════════════════
 // ADMIN TEAMS
 // ═══════════════════════════════════════
-function renderTeamsTab(){
-  renderTeamsSessionSel();
-  updatePublishBtn();
-  renderPresentList();
-  if(state.currentNinja.length||state.currentMamie.length){
-    renderTeamsOutput();
-    document.getElementById('teams-actions').style.display='block';
-  }
-}
+function renderTeamsTab(){ renderTonight(); }
 
 function renderPresentList(){
   const el=document.getElementById('present-list');
   const roster=activePlayers();
   if(!roster.length){ el.innerHTML=`<div class="empty">${state.players.length?'No active players — everyone is retired.':'Add players in Roster first.'}</div>`; return; }
-  el.innerHTML=roster.map(p=>{
-    const gc=playerGameCount(p.id);
-    const cs=compositeScore(p,gc).toFixed(2);
-    return `<div class="player-row">
+  el.innerHTML=roster.map(p=>`<label class="player-row" style="cursor:pointer;">
       <input type="checkbox" class="toggle" ${p.present?'checked':''} onchange="togglePresent(${p.id},this.checked)" />
-      ${avatarHTML(p.name,playerIdx(p.id),28)}
-      <div style="flex:1;">
-        <span style="font-size:13px;font-weight:500;">${p.name}</span>
-      </div>
-      ${skillBadge(p.skill)}
-      <span class="elo-tag">${p.elo_rating||1000}</span>
-      <span style="font-size:11px;color:var(--muted);">cs:${cs}</span>
-    </div>`;
-  }).join('');
+      <span style="flex:1;font-size:14px;font-weight:500;">${p.name}</span>
+      ${rankBadgeHTML(computeRank(p),true)}
+      <span class="elo-tag" style="min-width:34px;text-align:right;">${p.elo_rating||1000}</span>
+    </label>`).join('');
+  updatePresentCount();
+}
+
+function updatePresentCount(){
+  const el=document.getElementById('tn-count'); if(!el) return;
+  const n=presentPlayers().length;
+  el.textContent = n ? `${n} player${n===1?'':'s'}${n>=2?` · ${Math.ceil(n/2)} v ${Math.floor(n/2)}`:''}` : 'nobody yet';
+}
+
+async function setAllPresent(val){
+  const changed=activePlayers().filter(p=>!!p.present!==val);
+  changed.forEach(p=>p.present=val);
+  state.affinities={together:[],apart:[]};
+  renderPresentList();
+  await Promise.all(changed.map(p=>db.from('players').update({present:val}).eq('id',p.id)));
 }
 
 async function togglePresent(id, val){
   const p=state.players.find(pl=>pl.id===id); if(!p) return;
   p.present=val;
   state.affinities={together:[],apart:[]}; // reset rules when roster changes
+  updatePresentCount();
   await db.from('players').update({present:val}).eq('id',id);
+}
+
+// ═══════════════════════════════════════
+// TONIGHT
+// ═══════════════════════════════════════
+let tonightInit=false;
+
+function latestSeason(){ const o=seasonOrder(state.sessions); return o.length ? o[o.length-1] : ''; }
+
+function renderTonight(){
+  // first visit: open today's session automatically if there is one
+  if(!tonightInit){
+    tonightInit=true;
+    const today=state.sessions.find(s=>s.date===todayStr());
+    if(today && !state.teamsSession){ onTeamsSessChange(String(today.id)); }
+  }
+  renderTonightHeader();
+  renderPresentList();
+  renderTeamsOutput();
+  if(!state.currentNinja.length&&!state.currentMamie.length) document.getElementById('teams-actions').style.display='none';
+  updatePublishBtn();
+  renderTonightRecord();
+}
+
+function renderTonightHeader(){
+  const el=document.getElementById('tn-session'); if(!el) return;
+  const sess=state.sessions.find(s=>String(s.id)===String(state.teamsSession));
+  const others=[...state.sessions].sort((a,b)=>b.date.localeCompare(a.date));
+  const picker=`<select id="teams-sess-sel" onchange="onTeamsSessChange(this.value)" aria-label="Session" style="flex:1;min-width:170px;">
+      <option value="">${sess?'Switch session…':'Or pick an existing session…'}</option>
+      ${others.map(s=>`<option value="${s.id}"${sess&&s.id===sess.id?' selected':''}>${formatDate(s.date)} · ${s.season}</option>`).join('')}
+    </select>`;
+  document.getElementById('tn-steps').style.display = sess ? 'block' : 'none';
+  if(sess){
+    const n=state.games.filter(g=>g.session_id===sess.id).length;
+    el.innerHTML=`<div class="tn-card">
+      <div class="tn-title">${formatSessionDate(sess.date)}</div>
+      <div class="tn-sub">${sess.season} · ${n} game${n===1?'':'s'} recorded${sess.date===todayStr()?' · tonight':''}</div>
+      <div class="tn-row">${picker}${sess.date!==todayStr()&&!state.sessions.some(s=>s.date===todayStr())?`<button class="btn btn-sm" onclick="showStartTonight()">New session for today</button>`:''}</div>
+    </div>`;
+  } else {
+    const ls=latestSeason();
+    el.innerHTML=`<div class="tn-card">
+      <div class="tn-title">Game night</div>
+      <div class="tn-sub">${formatSessionDate(todayStr())}</div>
+      <div class="tn-row">
+        <div style="flex:1;min-width:150px;"><label class="form-label" for="tn-season">Season</label>
+          <input type="text" id="tn-season" value="${ls}" placeholder="e.g. Winter 2027" list="tn-season-list" />
+          <datalist id="tn-season-list">${seasonOrder(state.sessions).reverse().map(x=>`<option value="${x}">`).join('')}</datalist>
+        </div>
+        <button class="btn btn-primary" onclick="startTonight(this)">Start tonight's session</button>
+      </div>
+      <div class="tn-sub" style="margin-top:8px;">Only change the season when a new one starts. Ranks soft-reset at the first game of a new season.</div>
+      <div class="tn-row">${picker}</div>
+    </div>`;
+  }
+}
+
+function showStartTonight(){ state.teamsSession=''; state.currentNinja=[]; state.currentMamie=[]; renderTonight(); }
+
+async function startTonight(btn){
+  const season=(document.getElementById('tn-season').value||'').trim();
+  if(!season){ toast('Enter a season name.','err'); return; }
+  const date=todayStr();
+  const existing=state.sessions.find(s=>s.date===date&&s.season===season);
+  if(existing){ await onTeamsSessChange(String(existing.id)); return; }
+  if(state.sessions.length && !state.sessions.some(s=>s.season===season)
+     && !confirm(`Start a new season "${season}"? Everyone's rating is pulled halfway back toward their starting level at its first game.`)) return;
+  setLoading(btn,true);
+  const {data,error}=await db.from('sessions').insert({date,season}).select().single();
+  setLoading(btn,false);
+  if(error){ toast('Error creating session.','err'); console.error(error); return; }
+  state.sessions.unshift(data);
+  await onTeamsSessChange(String(data.id));
+  renderSessions(); renderPublic();
+  toast('Session started. Tick who\'s here.');
+}
+
+function renderTonightRecord(){
+  const el=document.getElementById('tn-record'); if(!el) return;
+  const sessId=parseInt(state.teamsSession);
+  const games=state.games.filter(g=>g.session_id===sessId).sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)||a.id-b.id);
+  const list=games.length?`<div class="tn-games">${games.map((g,i)=>{
+      const sc=(g.score_ninja!=null&&g.score_mamie!=null)?`<span class="ninja-c">${g.score_ninja}</span>–<span class="mamie-c">${g.score_mamie}</span>`:'—';
+      const b=g.winner==='ninja'?'<span class="badge badge-ninja">Ninja</span>':g.winner==='mamie'?'<span class="badge badge-mamie">Mamies</span>':'<span class="badge badge-draw">Draw</span>';
+      return `<div class="tn-game"><span class="n">G${i+1}</span><span class="sc">${sc}</span><span class="w">${b}</span><button class="btn btn-xs btn-danger" onclick="tnDeleteGame(${g.id})" aria-label="Delete game ${i+1}">✕</button></div>`;
+    }).join('')}</div>`:'';
+  if(!state.currentNinja.length||!state.currentMamie.length){
+    el.innerHTML=`<div class="card"><div class="tn-muted">Make and publish teams first.</div>${list}</div>`; return;
+  }
+  const warn = teamsArePublished() ? '' : `<div class="notice notice-warn" style="display:flex;">These teams aren't published yet, so players won't see them. Games still save with these teams.</div>`;
+  el.innerHTML=`${warn}<div class="card">
+      <div class="metrics-2" style="margin-bottom:12px;">
+        <div><div class="score-label ninja-c">Ninja Warriors</div><input type="number" id="score-ninja" class="score-input" placeholder="0" min="0" inputmode="numeric" oninput="autoWinner()" aria-label="Ninja score" /></div>
+        <div><div class="score-label mamie-c">Les mamies</div><input type="number" id="score-mamie" class="score-input" placeholder="0" min="0" inputmode="numeric" oninput="autoWinner()" aria-label="Mamies score" /></div>
+      </div>
+      <div class="card-sub">Winner <span style="text-transform:none;letter-spacing:0;font-weight:500;">· picked from the score</span></div>
+      <div class="win-btns">
+        <button class="win-btn" id="win-ninja" onclick="selectWinner('ninja')">Ninja Warriors</button>
+        <button class="win-btn" id="win-mamie" onclick="selectWinner('mamie')">Les mamies</button>
+        <button class="win-btn" id="win-draw" onclick="selectWinner('draw')">Draw</button>
+      </div>
+      <button class="btn btn-primary btn-full" id="save-btn" style="margin-top:14px;" onclick="recordGame(this)">Save game ${games.length+1}</button>
+      ${list}
+    </div>`;
+  selectedWinner=null;
+}
+
+// The winner follows the score, so the two can never disagree
+function autoWinner(){
+  const sn=document.getElementById('score-ninja').value, sm=document.getElementById('score-mamie').value;
+  if(sn===''||sm==='') return;
+  const a=parseInt(sn), b=parseInt(sm);
+  selectWinner(a>b?'ninja':b>a?'mamie':'draw');
+}
+
+async function tnDeleteGame(id){
+  await deleteGame(id);
+  renderTonightRecord(); renderTonightHeader(); renderPublic();
+}
+
+// ─── team balancer ───
+// Checks every possible split (fine up to ~22 players) and scores each with the SAME maths
+// as the win prediction: team-average rating → expected win chance. Together/apart rules respected.
+function findSplits(present){
+  const n=present.length;
+  if(n>22) return null;
+  const ids=present.map(p=>p.id), r=present.map(p=>p.elo_rating||seedRating(p));
+  const idx=new Map(ids.map((id,i)=>[id,i]));
+  const pairs=list=>list.filter(([a,b])=>idx.has(a)&&idx.has(b)).map(([a,b])=>[idx.get(a),idx.get(b)]);
+  const tog=pairs(state.affinities.together), apt=pairs(state.affinities.apart);
+  const lo=Math.floor(n/2), hi=Math.ceil(n/2), total=r.reduce((a,b)=>a+b,0), out=[];
+  for(let mask=1; mask<(1<<n); mask+=2){          // player 0 always on side A: halves the work
+    let c=0, sum=0;
+    for(let i=0;i<n;i++) if(mask&(1<<i)){ c++; sum+=r[i]; }
+    if(c<lo||c>hi||c===n) continue;
+    let ok=true;
+    for(const [a,b] of tog) if(((mask>>a)&1)!==((mask>>b)&1)){ ok=false; break; }
+    if(ok) for(const [a,b] of apt) if(((mask>>a)&1)===((mask>>b)&1)){ ok=false; break; }
+    if(!ok) continue;
+    const p=eloExpected(sum/c,(total-sum)/(n-c));
+    out.push({ mask, gap: Math.abs(p-0.5) });
+  }
+  out.sort((a,b)=>a.gap-b.gap);
+  return { ids, out };
+}
+
+function makeTeams(mode){
+  const present=presentPlayers();
+  if(present.length<2){ toast('Tick at least 2 players.','err'); return; }
+  document.getElementById('affinity-warning').style.display='none';
+  document.getElementById('loaded-teams-banner').style.display='none';
+  let res=findSplits(present);
+  if(res && !res.out.length){                      // rules can't all be met: ignore them this time
+    const saved=state.affinities; state.affinities={together:[],apart:[]};
+    res=findSplits(present); state.affinities=saved; showAffinityWarning();
+  }
+  if(!res){                                        // very large group: fall back to the quick method
+    generateBalanced(); return;
+  }
+  const best=res.out[0].gap;
+  let pool = mode==='balanced'
+    ? res.out.filter(x=>x.gap<=best+0.002)
+    : res.out.filter(x=>x.gap<=0.03);
+  if(mode==='shuffle' && pool.length<2) pool=res.out.slice(0,25);
+  // avoid handing back the split already on screen
+  const curKey=[...state.currentNinja].sort().join(',');
+  const choices=pool.length>1 ? pool.filter(x=>{
+      const a=res.ids.filter((_,i)=>x.mask&(1<<i)).sort().join(','), b=res.ids.filter((_,i)=>!(x.mask&(1<<i))).sort().join(',');
+      return a!==curKey && b!==curKey; }) : pool;
+  const pick=(choices.length?choices:pool)[Math.floor(Math.random()*(choices.length||pool.length))];
+  let A=res.ids.filter((_,i)=>pick.mask&(1<<i)), B=res.ids.filter((_,i)=>!(pick.mask&(1<<i)));
+  if(Math.random()<0.5) [A,B]=[B,A];               // random sides, so nobody is always Ninja
+  state.currentNinja=A; state.currentMamie=B;
+  dragId=null; dragTeam=null;
+  renderTeamsOutput();
+  renderTonightRecord();
 }
 
 // ─── affinity helpers ───────────────────────────────────────
@@ -2399,6 +2561,8 @@ function renderTeamsOutput(){
   hint.style.display='block';
   renderActiveRules();
   renderPredictionCard();
+  updatePublishBtn();
+  document.getElementById('teams-actions').style.display='block';
 }
 
 // ─── drag-and-drop ───────────────────────────────────────
@@ -2494,20 +2658,23 @@ async function publishTeams(btn){
   state.publishedMamie=[...state.currentMamie];
   state.publishedSessionId=parseInt(state.teamsSession);
   toast('Teams published! 🎉');
+  updatePublishBtn(); renderTonightRecord(); renderPublic();
 }
 
 // ─── teams tab helpers ───────────────────────────────────────
-function renderTeamsSessionSel(){
-  const sel=document.getElementById('teams-sess-sel'); if(!sel) return;
-  const sorted=[...state.sessions].sort((a,b)=>b.date.localeCompare(a.date));
-  sel.innerHTML='<option value="">Select a session...</option>'+
-    sorted.map(s=>`<option value="${s.id}"${String(s.id)===String(state.teamsSession)?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
+function renderTeamsSessionSel(){ renderTonightHeader(); }
+
+function teamsArePublished(){
+  const same=(a,b)=>a.length===b.length&&a.every(x=>b.includes(x));
+  return !!state.teamsSession && state.publishedSessionId===parseInt(state.teamsSession)
+    && same(state.currentNinja,state.publishedNinja) && same(state.currentMamie,state.publishedMamie);
 }
 
 function updatePublishBtn(){
   const btn=document.getElementById('publish-teams-btn'); if(!btn) return;
-  btn.disabled=!state.teamsSession;
-  btn.title=state.teamsSession?'':'Select a session first';
+  const done=teamsArePublished();
+  btn.disabled=!state.teamsSession||done;
+  btn.textContent = !state.teamsSession ? 'Start a session first' : done ? '✓ Published' : 'Publish teams';
 }
 
 async function onTeamsSessChange(val){
@@ -2519,6 +2686,7 @@ async function onTeamsSessChange(val){
     document.getElementById('teams-output').innerHTML='';
     document.getElementById('teams-actions').style.display='none';
     document.getElementById('pred-card').style.display='none';
+    renderTonightHeader(); renderTonightRecord();
     return;
   }
   const {data}=await db.from('published_teams')
@@ -2530,15 +2698,16 @@ async function onTeamsSessChange(val){
   if(row&&(row.ninja_ids||[]).length>0){
     state.currentNinja=row.ninja_ids;
     state.currentMamie=row.mamie_ids||[];
+    state.publishedNinja=[...state.currentNinja]; state.publishedMamie=[...state.currentMamie];
+    state.publishedSessionId=parseInt(val);
     renderTeamsOutput();
     document.getElementById('loaded-teams-banner').style.display='flex';
-    document.getElementById('teams-actions').style.display='block';
   } else {
     state.currentNinja=[]; state.currentMamie=[];
-    document.getElementById('teams-output').innerHTML='';
+    renderTeamsOutput();
     document.getElementById('teams-actions').style.display='none';
-    document.getElementById('pred-card').style.display='none';
   }
+  renderTonightHeader(); renderTonightRecord(); updatePublishBtn();
 }
 
 function renderActiveRules(){
@@ -2642,26 +2811,7 @@ function removeFromTeam(id){
 // ═══════════════════════════════════════
 // ADMIN RECORD GAME
 // ═══════════════════════════════════════
-function renderRecordTab(){
-  const sel=document.getElementById('record-sess-sel');
-  const prev=sel.value;
-  const sortedSess=[...state.sessions].sort((a,b)=>b.date.localeCompare(a.date));
-  sel.innerHTML='<option value="">Select a session...</option>'+
-    sortedSess.map(s=>`<option value="${s.id}"${prev==s.id?' selected':''}>${formatDate(s.date)} — ${s.season}</option>`).join('');
-  const hasTeams=state.currentNinja.length>0||state.currentMamie.length>0;
-  document.getElementById('record-no-teams').style.display=hasTeams?'none':'block';
-  document.getElementById('record-form').style.display=hasTeams?'block':'none';
-  if(hasTeams){
-    const ninja=state.currentNinja.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-    const mamie=state.currentMamie.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
-    document.getElementById('record-teams-preview').innerHTML=
-      `<div class="teams-wrap" style="margin-bottom:8px;">${teamCardHTML(ninja,'ninja',false,false)}${teamCardHTML(mamie,'mamie',false,false)}</div>`;
-  }
-  selectedWinner=null;
-  ['ninja','mamie','draw'].forEach(w=>document.getElementById('win-'+w).className='win-btn');
-  document.getElementById('score-ninja').value='';
-  document.getElementById('score-mamie').value='';
-}
+function renderRecordTab(){ renderTonightRecord(); }
 
 function selectWinner(w){
   selectedWinner=w;
@@ -2671,8 +2821,8 @@ function selectWinner(w){
 }
 
 async function recordGame(btn){
-  const sessId=document.getElementById('record-sess-sel').value;
-  if(!sessId){ toast('Select a session first.','err'); return; }
+  const sessId=state.teamsSession;
+  if(!sessId){ toast('Start a session first.','err'); return; }
   if(!selectedWinner){ toast('Select a winner.','err'); return; }
   const sn=document.getElementById('score-ninja').value;
   const sm=document.getElementById('score-mamie').value;
@@ -2699,7 +2849,7 @@ async function recordGame(btn){
     const {data:h2hData}=await db.from('head_to_head').select('*');
     state.h2h=h2hData||[];
     toast('Game saved! ✓');
-    renderRecordTab();
+    renderTonightRecord(); renderTonightHeader(); renderSessions(); renderPublic();
   } catch(e){
     console.error(e); toast('Error saving game.','err');
   } finally {
