@@ -168,6 +168,47 @@ input[type=number]{width:auto;}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap;cursor:pointer;}
 .chk input{accent-color:var(--blue);width:15px;height:15px;cursor:pointer;}
 .tbl-note{font-size:11px;color:var(--muted);margin-bottom:12px;}
+.rp-cell{display:inline-flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:40px;}
+.rp-num{font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:var(--text);}
+.rp-bar{width:40px;height:4px;border-radius:2px;background:#ECE7DF;overflow:hidden;}
+.rp-bar > span{display:block;height:100%;border-radius:2px;}
+.lb-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;}
+.lb-head .sec-title{margin:0;}
+.lb-head .season-tag{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;color:var(--muted);margin-left:6px;}
+tr.clickable{cursor:pointer;}
+tr.clickable:hover td{background:rgba(24,95,165,.04);}
+/* rank explainer + player page */
+.info-title{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;margin-bottom:4px;}
+.info-sub{font-size:13px;color:var(--muted);margin-bottom:18px;}
+.ladder{display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}
+.ladder-row{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:var(--r-sm);}
+.ladder-row .rank-icon{width:34px;height:34px;}
+.ladder-name{font-weight:600;font-size:14px;}
+.ladder-meta{font-size:12px;opacity:.75;}
+.ladder-count{margin-left:auto;font-family:'DM Mono',monospace;font-size:12px;font-weight:600;}
+.info-sec{margin-bottom:14px;}
+.info-sec h4{font-size:13px;font-weight:600;margin-bottom:3px;}
+.info-sec p{font-size:13px;color:#4A5563;line-height:1.5;}
+.pp-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;}
+.pp-head .rank-icon{width:64px;height:64px;}
+.pp-name{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;line-height:1.2;}
+.pp-rank{font-size:14px;font-weight:600;margin-top:2px;}
+.pp-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+.pp-progress{margin-bottom:18px;}
+.pp-progress .bar{height:8px;border-radius:4px;background:#ECE7DF;overflow:hidden;margin-bottom:5px;}
+.pp-progress .bar > span{display:block;height:100%;border-radius:4px;}
+.pp-progress .txt{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;}
+.season-chips{display:flex;flex-direction:column;gap:6px;}
+.season-chip{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--r-sm);font-size:13px;}
+.season-chip .rank-icon{width:28px;height:28px;}
+.season-chip .sn{font-weight:600;}
+.season-chip .sm{font-size:12px;color:var(--muted);}
+.pp-grid{width:100%;border-collapse:collapse;font-size:13px;}
+.pp-grid th{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;text-align:right;padding:0 0 6px;}
+.pp-grid th:first-child,.pp-grid td:first-child{text-align:left;}
+.pp-grid td{padding:6px 0;border-top:1px solid var(--border);text-align:right;font-family:'DM Mono',monospace;}
+.pp-grid td:first-child{font-family:'DM Sans',sans-serif;}
+.pp-chart{position:relative;height:200px;}
 @media(max-width:480px){
   #app .stats-tbl{font-size:12px;}
   #app .stats-tbl th,#app .stats-tbl td{padding-left:4px;padding-right:4px;}
@@ -553,6 +594,7 @@ const ELO = {
   PROVISIONAL_GAMES: 10,
   MARGIN_COEF: 0.15,
   MARGIN_CAP: 1.75,
+  SEASON_CARRY: 0.5,      // new season: keep 50% of distance from starting rating
 };
 
 function seedRating(player){
@@ -566,15 +608,56 @@ function marginMultiplier(pointDiff, winnerEdge){
   return Math.min(ELO.MARGIN_CAP, 1 + ELO.MARGIN_COEF * Math.log(1 + pointDiff) * damp);
 }
 
+// ─── seasons ───
+// Seasons are ordered by their first session date. A season "starts" at its first game.
+function seasonOrder(sessions){
+  const first = {};
+  for(const s of sessions||[]){
+    if(!s.season) continue;
+    if(!first[s.season] || s.date < first[s.season]) first[s.season] = s.date;
+  }
+  return Object.entries(first).sort((a,b)=>a[1].localeCompare(b[1])).map(([name])=>name);
+}
+
+function sessionSeasonMap(sessions){
+  return new Map((sessions||[]).map(s=>[s.id, s.season]));
+}
+
+// Season of the most recent game: the season ranks are shown for.
+function currentSeason(){
+  const ss = sessionSeasonMap(state.sessions);
+  let latest = null;
+  for(const g of state.games){
+    if(!ss.has(g.session_id)) continue;
+    if(!latest || new Date(g.created_at) > new Date(latest.created_at)) latest = g;
+  }
+  return latest ? ss.get(latest.session_id) : null;
+}
+
 // Pure replay of every game, oldest first. No DB access.
-function replayElo(players, games){
+// At the first game of each new season, every rating is pulled halfway back to its starting rating.
+function replayElo(players, games, sessions){
   const rating = new Map();
   const played = new Map();
-  for(const p of players){ rating.set(p.id, seedRating(p)); played.set(p.id, 0); }
+  const seed = new Map();
+  for(const p of players){ seed.set(p.id, seedRating(p)); rating.set(p.id, seed.get(p.id)); played.set(p.id, 0); }
+  const ss = sessionSeasonMap(sessions);
+  const order = seasonOrder(sessions);
+  let curSeasonIdx = -1;
   const history = [];
   const sorted = [...games].sort((a,b) =>
     (new Date(a.created_at) - new Date(b.created_at)) || (a.id - b.id));
   for(const g of sorted){
+    const si = order.indexOf(ss.get(g.session_id));
+    if(si > curSeasonIdx){
+      if(curSeasonIdx >= 0){
+        for(const [id, r] of rating){
+          const s0 = seed.get(id);
+          rating.set(id, Math.round(s0 + (r - s0) * ELO.SEASON_CARRY));
+        }
+      }
+      curSeasonIdx = si;
+    }
     const n = (g.ninja_ids || []).map(Number).filter(id => rating.has(id));
     const m = (g.mamie_ids || []).map(Number).filter(id => rating.has(id));
     if(!n.length || !m.length) continue;
@@ -603,19 +686,20 @@ function replayElo(players, games){
 }
 
 const TIERS = [
-  { name:'Iron',     min:-Infinity, icon:'🪨', divisions:false, bg:'#ECEAE7', fg:'#5A5550' },
-  { name:'Bronze',   min:875,       icon:'🥉', divisions:true,  bg:'#F6E9E1', fg:'#7A4A30' },
-  { name:'Silver',   min:950,       icon:'🥈', divisions:true,  bg:'#EEF1F4', fg:'#55606B' },
-  { name:'Gold',     min:1025,      icon:'🥇', divisions:true,  bg:'#FDF3E0', fg:'#8A5A12' },
-  { name:'Platinum', min:1100,      icon:'💠', divisions:true,  bg:'#E3F4F4', fg:'#1D6B6B' },
-  { name:'Diamond',  min:1175,      icon:'💎', divisions:true,  bg:'#E8F1FB', fg:'#0D3D72' },
-  { name:'Ace',      min:1250,      icon:'🏐', divisions:false, bg:'#1A2332', fg:'#FFFFFF' },
+  { name:'Iron',     min:-Infinity, icon:'🪨', divisions:false, bg:'#ECEAE7', fg:'#5A5550', band:'#F1EFEC' },
+  { name:'Bronze',   min:875,       icon:'🥉', divisions:true,  bg:'#F6E9E1', fg:'#7A4A30', band:'#F9EFE8' },
+  { name:'Silver',   min:950,       icon:'🥈', divisions:true,  bg:'#EEF1F4', fg:'#55606B', band:'#F2F4F6' },
+  { name:'Gold',     min:1025,      icon:'🥇', divisions:true,  bg:'#FDF3E0', fg:'#8A5A12', band:'#FDF6E8' },
+  { name:'Platinum', min:1100,      icon:'💠', divisions:true,  bg:'#E3F4F4', fg:'#1D6B6B', band:'#EAF6F6' },
+  { name:'Diamond',  min:1175,      icon:'💎', divisions:true,  bg:'#E8F1FB', fg:'#0D3D72', band:'#EEF4FC' },
+  { name:'Ace',      min:1250,      icon:'🏐', divisions:false, bg:'#1A2332', fg:'#FFFFFF', band:'#F2EEF8' },
 ];
 
 const RANK = {
   DIV_SIZE: 25,           // III / II / I
   DEMOTION_BUFFER: 10,    // must fall 10 below a tier floor to drop
-  PLACEMENT_GAMES: 10,
+  PLACEMENT_GAMES: 10,    // first season ever
+  SEASON_PLACEMENT: 5,    // every later season
   PROMO_WATCH: 10,        // within 10 of the next tier
 };
 
@@ -632,34 +716,102 @@ function divisionLabel(elo, tierIdx){
   return ['III','II','I'][Math.max(0, Math.min(2, step))];
 }
 
-// Walks the player's Elo history so the demotion shield and peak work without extra storage.
-function computeRank(player){
-  const hist = state.eloHistory.filter(h => h.player_id === player.id).sort((a,b) => a.id - b.id);
-  if(hist.length < RANK.PLACEMENT_GAMES){
-    return { status:'placement', played:hist.length, label:`Unranked ${hist.length}/${RANK.PLACEMENT_GAMES}` };
-  }
-  let tier = null, peakTier = 0;
-  for(let i = RANK.PLACEMENT_GAMES - 1; i < hist.length; i++){
-    const elo = hist[i].rating_after;
+// Tier walk over one season's games, starting once placements are done.
+function walkTiers(rows, startIdx){
+  let tier = null, peak = 0;
+  for(let i = startIdx; i < rows.length; i++){
+    const elo = rows[i].rating_after;
     const raw = rawTierIdx(elo);
     if(tier === null || raw > tier) tier = raw;
     else if(raw < tier && elo < TIERS[tier].min - RANK.DEMOTION_BUFFER) tier = raw;
-    peakTier = Math.max(peakTier, tier);
+    peak = Math.max(peak, tier);
   }
-  const elo = hist[hist.length - 1].rating_after;
+  return { tier, peak };
+}
+
+// Rank for the current season plus a per-season history. Derived from elo_history: no extra storage.
+function computeRank(player){
+  const ss = sessionSeasonMap(state.sessions);
+  const gameSeason = new Map(state.games.map(g=>[g.id, ss.get(g.session_id) ?? null]));
+  const hist = state.eloHistory.filter(h => h.player_id === player.id).sort((a,b) => a.id - b.id);
+
+  // group by season, in play order
+  const groups = [];
+  for(const h of hist){
+    const season = gameSeason.get(h.game_id) ?? null;
+    let g = groups.find(x => x.season === season);
+    if(!g){ g = { season, rows: [] }; groups.push(g); }
+    g.rows.push(h);
+  }
+
+  const seasons = [];
+  let lifetime = 0, allTimePeak = -1;
+  for(const g of groups){
+    const needed = lifetime > 0 ? RANK.SEASON_PLACEMENT : RANK.PLACEMENT_GAMES;
+    const res = g.rows.length >= needed ? walkTiers(g.rows, needed - 1) : null;
+    const finalElo = g.rows[g.rows.length - 1].rating_after;
+    seasons.push({ season: g.season, games: g.rows.length, needed, ranked: !!res,
+      tierIdx: res ? res.tier : null, peakTierIdx: res ? res.peak : null, finalElo });
+    if(res) allTimePeak = Math.max(allTimePeak, res.peak);
+    lifetime += g.rows.length;
+  }
+
+  const base = { seasons, allTimePeakIdx: allTimePeak };
+  if(player.retired){
+    const peak = allTimePeak >= 0 ? allTimePeak : null;   // null = retired before ever ranking
+    return { ...base, status:'legend', peakTierIdx: peak, peakLabel: peak!=null ? TIERS[peak].name : null,
+      elo: hist.length ? hist[hist.length-1].rating_after : seedRating(player) };
+  }
+
+  const cur = currentSeason();
+  const entry = seasons.find(x => x.season === cur);
+  const curNeeded = entry ? entry.needed : (lifetime > 0 ? RANK.SEASON_PLACEMENT : RANK.PLACEMENT_GAMES);
+  if(!entry || !entry.ranked){
+    const playedNow = entry ? entry.games : 0;
+    return { ...base, status:'placement', played: playedNow, needed: curNeeded,
+      label: `Placement ${playedNow}/${curNeeded}`, elo: player.elo_rating || seedRating(player) };
+  }
+
+  const elo = entry.finalElo;
+  const tier = entry.tierIdx;
   const t = TIERS[tier];
   const division = divisionLabel(elo, tier);
   const next = TIERS[tier + 1];
   return {
-    status: player.retired ? 'legend' : 'ranked',
+    ...base,
+    status: 'ranked',
     tierIdx: tier, tier: t.name, icon: t.icon, division,
     label: division ? `${t.name} ${division}` : t.name,
     elo,
     shielded: elo < t.min,
     promoWatch: !!next && elo < next.min && next.min - elo <= RANK.PROMO_WATCH,
-    peakTierIdx: peakTier,
-    peakLabel: TIERS[peakTier].name,
+    peakTierIdx: entry.peakTierIdx,                // this season
+    peakLabel: TIERS[entry.peakTierIdx].name,
   };
+}
+
+// Progress inside the current division as 0-100 rank points (RP). Hides raw Elo.
+function rankProgress(rank){
+  if(rank.status === 'placement'){
+    return { pct: rank.played / rank.needed * 100, short: `${rank.played}/${rank.needed}`,
+      long: `${rank.needed - rank.played} placement game${rank.needed - rank.played === 1 ? '' : 's'} to go` };
+  }
+  if(rank.status === 'legend') return { pct: 100, short: '—', long: 'Retired' };
+  const t = TIERS[rank.tierIdx], elo = rank.elo;
+  if(t.name === 'Ace'){
+    const above = Math.max(0, Math.round((elo - t.min) / RANK.DIV_SIZE * 100));
+    return { pct: 100, short: `+${above}`, long: `${above} RP above the Ace line` };
+  }
+  if(!t.divisions){                 // Iron: distance to Bronze, on a 300 RP scale
+    const nextMin = TIERS[rank.tierIdx + 1].min;
+    const toGo = Math.max(0, Math.ceil((nextMin - elo) / RANK.DIV_SIZE * 100));
+    return { pct: Math.max(0, 100 - toGo / 3), short: `−${toGo}`, long: `${toGo} RP to Bronze III` };
+  }
+  const step = Math.max(0, Math.min(2, Math.floor((elo - t.min) / RANK.DIV_SIZE)));
+  const divMin = t.min + step * RANK.DIV_SIZE;
+  const rp = rank.shielded ? 0 : Math.max(0, Math.min(99, Math.floor((elo - divMin) / RANK.DIV_SIZE * 100)));
+  const nextLabel = step < 2 ? `${t.name} ${['II','I'][step]}` : `${TIERS[rank.tierIdx + 1].name}${TIERS[rank.tierIdx + 1].divisions ? ' III' : ''}`;
+  return { pct: rp, short: `${rp}`, long: `${rp} RP · ${100 - rp} to ${nextLabel}` };
 }
 
 const RANK_ICON_DIR = 'assets/ranks/';
@@ -672,10 +824,11 @@ function tierIconHTML(t, cls='rank-icon'){
 // compact = icon + division only (tables, team cards); full = icon + full label
 function rankBadgeHTML(rank, compact=false){
   if(rank.status === 'placement'){
-    const txt = compact ? `${rank.played}/${RANK.PLACEMENT_GAMES}` : rank.label;
-    return `<span class="rank-badge" style="background:#F2F2F2;color:var(--muted);" title="Unranked: plays ${RANK.PLACEMENT_GAMES} games before getting a rank">❔ ${txt}</span>`;
+    const txt = compact ? `${rank.played}/${rank.needed}` : rank.label;
+    return `<span class="rank-badge" style="background:#F2F2F2;color:var(--muted);" title="Placement: ${rank.needed} games this season before getting a rank">❔ ${txt}</span>`;
   }
   if(rank.status === 'legend'){
+    if(rank.peakTierIdx == null) return `<span class="rank-badge" style="background:#ECECEC;color:var(--muted);" title="Retired before finishing placements">Retired</span>`;
     const pt = TIERS[rank.peakTierIdx];
     return `<span class="rank-badge${compact?' compact':''}" style="background:${pt.bg};color:${pt.fg};" title="Retired. Peak rank: ${pt.name}">${tierIconHTML(pt)}Legend</span>`;
   }
@@ -683,14 +836,22 @@ function rankBadgeHTML(rank, compact=false){
   const flair = rank.promoWatch ? ' 🔥' : rank.shielded ? ' 🛡️' : '';
   const tip = `${rank.label}` + (rank.promoWatch ? ' · Promo watch: close to the next tier'
             : rank.shielded ? ' · Demotion shield: just below this tier' : '')
-            + ` · Peak: ${rank.peakLabel}`;
+            + ` · Season peak: ${rank.peakLabel}`;
   const txt = compact ? (rank.division || t.name) : rank.label;
   return `<span class="rank-badge${compact?' compact':''}" style="background:${t.bg};color:${t.fg};" title="${tip}">${tierIconHTML(t)}${txt}${flair}</span>`;
 }
 
+function rpCellHTML(rank){
+  const pr = rankProgress(rank);
+  const t = rank.status==='ranked' ? TIERS[rank.tierIdx] : null;
+  const color = t ? (t.name==='Ace' ? '#C4892A' : t.fg) : '#B8B2A8';
+  return `<span class="rp-cell" title="${pr.long}"><span class="rp-num">${pr.short}</span><span class="rp-bar"><span style="width:${pr.pct}%;background:${color};"></span></span></span>`;
+}
+
 // Higher = better. Placement players sort below everyone ranked.
 function rankSortValue(rank, elo){
-  if(rank.status === 'placement') return -100000 + elo;
+  if(rank.status === 'placement' || rank.tierIdx == null && rank.peakTierIdx == null) return -100000 + elo;
+  if(rank.status === 'legend') return rank.peakTierIdx * 10000 + elo;
   return rank.tierIdx * 10000 + elo;
 }
 
@@ -1120,8 +1281,8 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
     const inTogether=swappable&&state.affinities.together.some(([a,b])=>a===p.id||b===p.id);
     const inApart=swappable&&state.affinities.apart.some(([a,b])=>a===p.id||b===p.id);
     const afBorder=inTogether&&inApart?'border-left:3px solid var(--gold);':inTogether?'border-left:3px solid var(--success);':inApart?'border-left:3px solid var(--danger);':'';
-    const ctxAttr=swappable?`oncontextmenu="onPlayerRightClick(event,${p.id})"`:'';
-    return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs} ${ctxAttr} style="${afBorder}">
+    const ctxAttr=swappable?`oncontextmenu="onPlayerRightClick(event,${p.id})"`:`onclick="showPlayerModal(${p.id},false)"`;
+    return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs} ${ctxAttr} style="${afBorder}${swappable?'':'cursor:pointer;'}">
       ${swappable?'<span class="drag-handle">⠿</span>':''}
       ${avatarHTML(p.name,idx,28)}
       <div style="flex:1;min-width:0;">
@@ -1136,8 +1297,8 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
   const avgCs = players.length ? (players.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/players.length).toFixed(2) : '—';
   const footer = `<div class="team-card-footer">
     <span><strong style="font-family:'DM Mono',monospace;">${players.length}</strong> players</span>
-    <span>Avg Elo <strong style="font-family:'DM Mono',monospace;">${avgElo}</strong></span>
-    ${showStats?`<span>Avg cs <strong style="font-family:'DM Mono',monospace;">${avgCs}</strong></span>`:''}
+    ${showStats?`<span>Avg Elo <strong style="font-family:'DM Mono',monospace;">${avgElo}</strong></span>
+    <span>Avg cs <strong style="font-family:'DM Mono',monospace;">${avgCs}</strong></span>`:''}
   </div>`;
   return `<div class="team-card">
     <div class="team-banner team-banner-${team}">${label}</div>
@@ -1169,30 +1330,35 @@ function renderPubLb(){
 
   const body = rows.length ? rows.map((r,i)=>{
     const pc = top3 ? (i===0?' r1':i===1?' r2':i===2?' r3':'') : '';
-    return `<tr class="${r.p.retired?'is-retired':''}">
+    return `<tr class="clickable${r.p.retired?' is-retired':''}" onclick="showPlayerModal(${r.p.id},false)">
       <td class="pos${pc}">${i+1}</td>
       <td class="l"><div class="pl-cell">${avatarHTML(r.p.name,playerIdx(r.p.id),26)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
       <td class="l">${rankBadgeHTML(r.rank,true)}</td>
-      <td class="num" style="color:var(--blue);font-weight:600;">${r.elo}</td>
+      <td>${rpCellHTML(r.rank)}</td>
       <td class="num">${r.gc?`${r.w}–${r.l}`:'—'}</td>
       <td class="num">${r.pct!=null?r.pct+'%':'—'}</td>
     </tr>`;
   }).join('') : '<tr><td colspan="6"><div class="empty">No games yet.</div></td></tr>';
 
   const retiredCount = state.players.filter(p=>p.retired&&playerGameCount(p.id)>0).length;
+  const cur = currentSeason();
   el.innerHTML=`
+    <div class="lb-head">
+      <div class="sec-title">Ranked${cur?`<span class="season-tag">${cur}</span>`:''}</div>
+      <button class="btn btn-sm" onclick="showRanksInfo()">ⓘ How ranks work</button>
+    </div>
     <div class="tbl-controls">
       <select id="pub-season-sel" onchange="renderPubLb()">${seasonOpts}</select>
       ${retiredCount?`<label class="chk"><input type="checkbox" ${showRetiredLb?'checked':''} onchange="showRetiredLb=this.checked;renderPubLb()">Retired</label>`:''}
     </div>
-    <div class="tbl-note">Rank and Elo are all-time. W-L follows the record selected above. Tap a column to sort.</div>
+    <div class="tbl-note">Rank is for the current season. W-L follows the record picked above. Tap a column to sort, or a player to see their card.</div>
     <div class="card" style="padding:8px 4px;overflow-x:auto;">
       <table class="stats-tbl">
         <thead><tr>
           <th class="l" style="text-align:center;">#</th>
           ${thSort('lb','name','Player','l')}
           ${thSort('lb','rank','Rank','l')}
-          ${thSort('lb','elo','Elo')}
+          <th title="Rank points: progress inside your division">RP</th>
           ${thSort('lb','w','W-L')}
           ${thSort('lb','pct','W%')}
         </tr></thead>
@@ -1610,11 +1776,15 @@ async function saveSession(id, btn){
   setLoading(btn,false);
   if(error){ toast('Failed to save.','err'); console.error(error); return; }
   const s=state.sessions.find(s=>s.id===id);
+  const seasonChanged=s&&(s.season!==season||s.date!==date);
   if(s){ s.date=date; s.season=season; }
+  // Seasons decide when ratings soft-reset, so re-run the replay if they changed
+  const hasGames=state.games.some(g=>g.session_id===id);
+  if(seasonChanged&&hasGames){ try{ await recalculateAllElo(); }catch(e){ console.error(e); toast('Saved, but Elo recalculation failed. Use Recalculate Elo.','err'); } }
   editingSessionId=null;
   renderSessions();
   renderTeamsSessionSel();
-  toast('Session updated.');
+  toast(seasonChanged&&hasGames?'Session updated. Elo recalculated.':'Session updated.');
 }
 
 async function deleteSession(id){
@@ -2204,7 +2374,7 @@ async function recordGame(btn){
 }
 
 async function recalculateAllElo(){
-  const { rating, history } = replayElo(state.players, state.games);
+  const { rating, history } = replayElo(state.players, state.games, state.sessions);
   for(const p of state.players) p.elo_rating = rating.get(p.id);
 
   // Rebuild elo_history table
@@ -2398,32 +2568,123 @@ function renderPredictionCard(){
   el.style.display='block';
 }
 
-function showPlayerModal(id){
+// ═══════════════════════════════════════
+// RANK EXPLAINER
+// ═══════════════════════════════════════
+function showRanksInfo(){
+  const cur = currentSeason();
+  const counts = {};
+  for(const p of activePlayers()){
+    const r = computeRank(p);
+    if(r.status==='ranked') counts[r.tierIdx] = (counts[r.tierIdx]||0) + 1;
+  }
+  const ladder = [...TIERS].map((t,i)=>({t,i})).reverse().map(({t,i})=>`
+    <div class="ladder-row" style="background:${t.band};">
+      ${tierIconHTML(t)}
+      <div>
+        <div class="ladder-name">${t.name}</div>
+        <div class="ladder-meta">${t.divisions ? 'Divisions III → II → I' : t.name==='Ace' ? 'The top. No divisions' : 'The starting climb'}</div>
+      </div>
+      <span class="ladder-count">${counts[i] ? counts[i] + (counts[i]===1?' player':' players') : ''}</span>
+    </div>`).join('');
+  document.getElementById('modal-body').innerHTML=`
+    <div class="info-title">How ranks work</div>
+    <div class="info-sub">${cur ? `Current season: <strong>${cur}</strong>` : 'Ranks appear once games are recorded.'}</div>
+    <div class="ladder">${ladder}</div>
+    <div class="info-sec"><h4>Every game counts</h4><p>Win and you climb, lose and you slip. Everyone on a team moves by the same amount, so your teammates can't steal your points.</p></div>
+    <div class="info-sec"><h4>Upsets pay more</h4><p>Beating a stronger team earns more than beating a weaker one, and losing to a weaker team costs more. Winning big helps a little, but blowouts are capped.</p></div>
+    <div class="info-sec"><h4>Rank points (RP)</h4><p>Each division is 100 RP. Fill the bar to move up a division; clear Division I to reach the next tier.</p></div>
+    <div class="info-sec"><h4>Promotions and the shield</h4><p>You move up the moment you cross a line. Dropping down takes a bit more: a short shield 🛡️ protects you just below your tier, so one bad game won't demote you. 🔥 means you're close to promotion.</p></div>
+    <div class="info-sec"><h4>Placements</h4><p>New players play ${RANK.PLACEMENT_GAMES} placement games before getting a rank. Their rating moves faster at first so it finds their level quickly.</p></div>
+    <div class="info-sec"><h4>Seasons</h4><p>When a new season starts, everyone is pulled halfway back toward their starting level, then plays ${RANK.SEASON_PLACEMENT} placement games. Your final rank each season is kept on your player card.</p></div>
+    <div class="info-sec"><h4>Where you start</h4><p>A new player's starting point comes from their skill rating. After that, only results move you.</p></div>`;
+  document.getElementById('player-modal').style.display='flex';
+}
+
+// ═══════════════════════════════════════
+// PLAYER PAGE (public + admin)
+// ═══════════════════════════════════════
+let playerChart = null;
+
+function seasonRecord(id, games){
+  const gc=playerGameCountFromGames(id,games), w=playerWinsFromGames(id,games);
+  const sgc=playerScoredGameCountFromGames(id,games);
+  const diff=sgc?playerPointsForFromGames(id,games)-playerPointsAgainstFromGames(id,games):null;
+  return {gc,w,l:gc-w,pct:gc?Math.round(w/gc*100):null,diff};
+}
+
+function showPlayerModal(id, admin){
+  if(admin===undefined) admin = isAdmin && document.getElementById('page-admin').classList.contains('active');
   const p=state.players.find(pl=>pl.id===id); if(!p) return;
   const idx=playerIdx(id);
-  const gc=playerGameCount(id);
-  const w=playerWins(id);
-  const pct=gc>0?Math.round(w/gc*100):0;
-  const elo=p.elo_rating||1000;
-  const eloDiff=elo-seedRating(p);
   const rank=computeRank(p);
-  const hist5=state.eloHistory.filter(h=>h.player_id===id).slice(-5);
-  const d5=hist5.reduce((s,h)=>s+h.change,0);
-  const eColor=eloDiff>0?'var(--success)':eloDiff<0?'var(--danger)':'var(--muted)';
-  const dColor=d5>0?'var(--success)':d5<0?'var(--danger)':'var(--muted)';
-  const eStr=(eloDiff>=0?'+':'')+eloDiff;
-  const d5Str=(d5>=0?'+':'')+d5;
+  const pr=rankProgress(rank);
+  const cur=currentSeason();
+  const elo=p.elo_rating||1000;
 
-  // Duo partners (min 3 games)
+  // header icon + rank line
+  let icon='', rankLine='', color='var(--muted)';
+  if(rank.status==='ranked'){
+    const t=TIERS[rank.tierIdx]; icon=tierIconHTML(t); color=t.name==='Ace'?'var(--gold)':t.fg;
+    rankLine=`${rank.label}${rank.promoWatch?' 🔥':rank.shielded?' 🛡️':''}`;
+  } else if(rank.status==='legend'){
+    if(rank.peakTierIdx!=null){ const t=TIERS[rank.peakTierIdx]; icon=tierIconHTML(t); color=t.fg; rankLine=`Legend · peak ${t.name}`; }
+    else rankLine='Retired';
+  } else {
+    rankLine=`Placement ${rank.played}/${rank.needed}`;
+  }
+  const head=`<div class="pp-head">
+      ${icon || avatarHTML(p.name,idx,64)}
+      <div style="min-width:0;">
+        <div class="pp-name">${p.name}</div>
+        <div class="pp-rank" style="color:${color};">${rankLine}</div>
+        <div class="pp-meta">${admin?`Elo ${elo} · skill ${p.skill} · `:''}${cur&&rank.status!=='legend'?cur:''}</div>
+      </div>
+    </div>`;
+
+  const barColor = rank.status==='ranked' ? (TIERS[rank.tierIdx].name==='Ace'?'var(--gold)':TIERS[rank.tierIdx].fg) : '#B8B2A8';
+  const progress = rank.status==='legend' ? '' : `<div class="pp-progress">
+      <div class="bar"><span style="width:${pr.pct}%;background:${barColor};"></span></div>
+      <div class="txt"><span>${pr.long}</span>${rank.status==='ranked'?`<span>Season peak: ${rank.peakLabel}</span>`:''}</div>
+    </div>`;
+
+  // records: this season vs all-time
+  const seasonGames = cur ? filterGamesBySeason(cur) : [];
+  const rs = seasonRecord(id, seasonGames), ra = seasonRecord(id, state.games);
+  const fmtDiff = d => d==null?'—':d>0?`+${d}`:d<0?`−${Math.abs(d)}`:'0';
+  const records=`<div style="margin-bottom:18px;">
+    <table class="pp-grid">
+      <tr><th></th><th>${cur||'Season'}</th><th>All-time</th></tr>
+      <tr><td>Games</td><td>${rs.gc}</td><td>${ra.gc}</td></tr>
+      <tr><td>Record</td><td>${rs.gc?`${rs.w}–${rs.l}`:'—'}</td><td>${ra.gc?`${ra.w}–${ra.l}`:'—'}</td></tr>
+      <tr><td>Win rate</td><td>${rs.pct!=null?rs.pct+'%':'—'}</td><td>${ra.pct!=null?ra.pct+'%':'—'}</td></tr>
+      <tr><td>Point diff</td><td>${fmtDiff(rs.diff)}</td><td>${fmtDiff(ra.diff)}</td></tr>
+    </table></div>`;
+
+  // rank history, newest first
+  const chips = [...rank.seasons].reverse().map(x=>{
+    if(!x.ranked) return `<div class="season-chip"><span style="font-size:20px;width:28px;text-align:center;">❔</span>
+      <div><div class="sn">${x.season||'No season'}</div><div class="sm">Unranked · ${x.games} game${x.games===1?'':'s'}</div></div></div>`;
+    const t=TIERS[x.tierIdx], div=divisionLabel(x.finalElo,x.tierIdx);
+    const live = x.season===cur && rank.status==='ranked';
+    return `<div class="season-chip" style="background:${t.band};">
+      ${tierIconHTML(t)}
+      <div><div class="sn">${x.season||'No season'}${live?' <span class="sm">(in progress)</span>':''}</div>
+      <div class="sm">${live?'Now':'Finished'} ${t.name}${div?' '+div:''} · peak ${TIERS[x.peakTierIdx].name} · ${x.games} games</div></div>
+    </div>`;
+  }).join('');
+  const historyHTML = chips ? `<div style="margin-bottom:18px;"><div class="modal-sec-title">Rank history</div><div class="season-chips">${chips}</div></div>` : '';
+
+  const hasChart = state.eloHistory.some(h=>h.player_id===id) && typeof Chart!=='undefined';
+  const chartHTML = hasChart ? `<div style="margin-bottom:18px;"><div class="modal-sec-title">Rank over time</div><div class="pp-chart"><canvas id="pp-chart"></canvas></div></div>` : '';
+
+  // duos + rivals (min 3 games)
   const duoPairs=state.duoStats
     .filter(d=>(d.player_a_id===id||d.player_b_id===id)&&d.games_together>=3)
     .map(d=>{
-      const partnerId=d.player_a_id===id?d.player_b_id:d.player_a_id;
-      const partner=state.players.find(pl=>pl.id===partnerId); if(!partner) return null;
+      const partner=state.players.find(pl=>pl.id===(d.player_a_id===id?d.player_b_id:d.player_a_id)); if(!partner) return null;
       return {partner,g:d.games_together,w:d.wins_together,pct:Math.round(d.wins_together/d.games_together*100)};
     }).filter(Boolean).sort((a,b)=>b.pct-a.pct||b.g-a.g).slice(0,3);
-
-  // H2H records (min 3 games)
   const h2hRecs=state.h2h
     .filter(h=>(h.player_a_id===id||h.player_b_id===id)&&h.games>=3)
     .map(h=>{
@@ -2433,54 +2694,82 @@ function showPlayerModal(id){
       const opp=state.players.find(pl=>pl.id===oppId); if(!opp) return null;
       return {opp,myW,theirW,g:h.games,diff:myW-theirW};
     }).filter(Boolean);
-  const bestH2H=[...h2hRecs].sort((a,b)=>b.diff-a.diff).slice(0,3);
-  const worstH2H=[...h2hRecs].sort((a,b)=>a.diff-b.diff).slice(0,3);
+  const bestH2H=[...h2hRecs].sort((a,b)=>b.diff-a.diff).slice(0,3).filter(h=>h.diff>0);
+  const worstH2H=[...h2hRecs].sort((a,b)=>a.diff-b.diff).slice(0,3).filter(h=>h.diff<0);
+  const listSec=(title,rows)=>rows.length?`<div style="margin-bottom:16px;"><div class="modal-sec-title">${title}</div>${rows.join('')}</div>`:'';
 
   document.getElementById('modal-body').innerHTML=`
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;">
-      ${avatarHTML(p.name,idx,48)}
-      <div>
-        <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;">${p.name}</div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;">
-          ${skillBadge(p.skill)}
-          <span class="lb-elo">${elo}</span>
-          <span style="font-size:12px;color:${eColor};">${eStr} from start</span>
-          ${p.retired?'<span class="badge badge-retired">Retired</span>':''}
-        </div>
-      </div>
-    </div>
-    <div style="margin-bottom:16px;">
-      <div class="modal-sec-title">Rank</div>
-      <div class="modal-stat-row"><span>Current</span>${rankBadgeHTML(rank)}</div>
-      ${rank.status!=='placement'?`<div class="modal-stat-row"><span>Peak</span><span style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">${tierIconHTML(TIERS[rank.peakTierIdx])}${rank.peakLabel}</span></div>`:''}
-      ${rank.status==='ranked'&&TIERS[rank.tierIdx+1]?`<div class="modal-stat-row"><span>To ${TIERS[rank.tierIdx+1].name}</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${Math.max(0,TIERS[rank.tierIdx+1].min-rank.elo)} Elo</span></div>`:''}
-    </div>
-    <div style="margin-bottom:16px;">
-      <div class="modal-sec-title">Season stats</div>
-      <div class="modal-stat-row"><span>Games played</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${gc}</span></div>
-      <div class="modal-stat-row"><span>Wins</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${w}</span></div>
-      <div class="modal-stat-row"><span>Win rate</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${pct}%</span></div>
-      <div class="modal-stat-row"><span>Elo last 5 games</span><span style="font-family:'DM Mono',monospace;font-weight:600;color:${dColor};">${d5Str}</span></div>
-    </div>
-    ${duoPairs.length?`<div style="margin-bottom:16px;">
-      <div class="modal-sec-title">Best duo partners</div>
-      ${duoPairs.map(d=>`<div class="modal-stat-row"><span>${d.partner.name}</span><span style="font-family:'DM Mono',monospace;">${d.w}W ${d.g}G <strong style="color:var(--success);">${d.pct}%</strong></span></div>`).join('')}
-    </div>`:''}
-    ${bestH2H.length?`<div style="margin-bottom:16px;">
-      <div class="modal-sec-title">Best H2H records</div>
-      ${bestH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="font-family:'DM Mono',monospace;"><strong style="color:var(--success);">${h.myW}</strong>–${h.theirW} (${h.g}G)</span></div>`).join('')}
-    </div>`:''}
-    ${worstH2H.length?`<div style="margin-bottom:16px;">
-      <div class="modal-sec-title">Worst H2H records</div>
-      ${worstH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="font-family:'DM Mono',monospace;">${h.myW}–<strong style="color:var(--danger);">${h.theirW}</strong> (${h.g}G)</span></div>`).join('')}
-    </div>`:''}
+    ${head}${progress}${records}${historyHTML}${chartHTML}
+    ${listSec('Best teammates',duoPairs.map(d=>`<div class="modal-stat-row"><span>${d.partner.name}</span><span style="font-family:'DM Mono',monospace;">${d.w}–${d.g-d.w} <strong style="color:var(--success);">${d.pct}%</strong></span></div>`))}
+    ${listSec('Owns',bestH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="font-family:'DM Mono',monospace;"><strong style="color:var(--success);">${h.myW}</strong>–${h.theirW}</span></div>`))}
+    ${listSec('Nemesis',worstH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="font-family:'DM Mono',monospace;">${h.myW}–<strong style="color:var(--danger);">${h.theirW}</strong></span></div>`))}
   `;
   document.getElementById('player-modal').style.display='flex';
+  if(hasChart) renderPlayerChart(id, admin);
+}
+
+// Rating line over coloured tier bands, with dashed lines where seasons change.
+function renderPlayerChart(id, admin){
+  const canvas=document.getElementById('pp-chart'); if(!canvas) return;
+  if(playerChart){ playerChart.destroy(); playerChart=null; }
+  const ss=sessionSeasonMap(state.sessions);
+  const gameSeason=new Map(state.games.map(g=>[g.id, ss.get(g.session_id)??null]));
+  const hist=state.eloHistory.filter(h=>h.player_id===id).sort((a,b)=>a.id-b.id);
+  const data=hist.map(h=>h.rating_after);
+  const labels=hist.map((_,i)=>`G${i+1}`);
+  const seps=[];
+  hist.forEach((h,i)=>{
+    const sn=gameSeason.get(h.game_id);
+    if(i===0 || sn!==gameSeason.get(hist[i-1].game_id)) seps.push({i, label:sn||''});
+  });
+  const lo=Math.min(...data)-25, hi=Math.max(...data)+25;
+  const bands={
+    id:'tierBands',
+    beforeDatasetsDraw(chart){
+      const {ctx,chartArea:a,scales:{x,y}}=chart;
+      ctx.save();
+      TIERS.forEach((t,i)=>{
+        const tLo=Math.max(i===0?y.min:t.min, y.min);
+        const tHi=Math.min(i<TIERS.length-1?TIERS[i+1].min:y.max, y.max);
+        if(tHi<=tLo) return;
+        const yTop=y.getPixelForValue(tHi), yBot=y.getPixelForValue(tLo);
+        ctx.fillStyle=t.band; ctx.fillRect(a.left,yTop,a.right-a.left,yBot-yTop);
+        if(yBot-yTop>14){
+          ctx.fillStyle=t.name==='Ace'?'#8A6BB8':t.fg; ctx.globalAlpha=.6;
+          ctx.font='600 10px "DM Sans", sans-serif'; ctx.textAlign='right';
+          ctx.fillText(t.name.toUpperCase(), a.right-6, yTop+13); ctx.globalAlpha=1;
+        }
+      });
+      seps.forEach(sp=>{
+        const px = sp.i===0 ? a.left : x.getPixelForValue(sp.i-0.5);
+        if(sp.i>0){ ctx.strokeStyle='rgba(26,35,50,.35)'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(px,a.top); ctx.lineTo(px,a.bottom); ctx.stroke(); ctx.setLineDash([]); }
+        ctx.fillStyle='rgba(26,35,50,.55)'; ctx.font='600 10px "DM Sans", sans-serif'; ctx.textAlign='left';
+        ctx.fillText(sp.label, px+5, a.bottom-6);
+      });
+      ctx.restore();
+    }
+  };
+  playerChart=new Chart(canvas.getContext('2d'),{
+    type:'line',
+    data:{labels,datasets:[{data,borderColor:'#1A2332',borderWidth:2,tension:.25,pointRadius:0,pointHoverRadius:4,pointBackgroundColor:'#1A2332',fill:false}]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{displayColors:false,callbacks:{
+        title:c=>`Game ${c[0].dataIndex+1}`,
+        label:c=>{ const v=c.parsed.y, ti=rawTierIdx(v), d=divisionLabel(v,ti); return `${TIERS[ti].name}${d?' '+d:''}${admin?` · ${v}`:''}`; }}}},
+      scales:{
+        y:{min:lo,max:hi,grid:{display:false},ticks:{display:admin,font:{family:'DM Mono',size:10}},border:{display:false}},
+        x:{grid:{display:false},ticks:{display:false},border:{display:false}},
+      },
+    },
+    plugins:[bands],
+  });
 }
 
 function closePlayerModal(event){
   if(event&&event.target!==document.getElementById('player-modal')) return;
   document.getElementById('player-modal').style.display='none';
+  if(playerChart){ playerChart.destroy(); playerChart=null; }
 }
 
 // ═══════════════════════════════════════
@@ -2556,7 +2845,7 @@ function renderStatsTable(){
     const dc=r.d5>0?'color:var(--success)':r.d5<0?'color:var(--danger)':'color:var(--muted)';
     const diffColor=r.diff==null?'color:var(--muted)':r.diff>0?'color:var(--success)':r.diff<0?'color:var(--danger)':'color:var(--muted)';
     const diffStr=r.diff==null?'—':r.diff>0?`+${r.diff}`:r.diff<0?`−${Math.abs(r.diff)}`:'0';
-    return `<tr class="${r.p.retired?'is-retired':''}">
+    return `<tr class="clickable${r.p.retired?' is-retired':''}" onclick="showPlayerModal(${r.p.id},true)">
       <td class="l"><div class="pl-cell" style="padding-left:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
       <td class="l">${rankBadgeHTML(r.rank,true)}</td>
       <td class="num">${r.gc}</td>
