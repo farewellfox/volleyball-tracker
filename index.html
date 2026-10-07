@@ -143,6 +143,40 @@ input[type=number]{width:auto;}
 .elo-tag{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);flex-shrink:0;}
 .ret-tag{font-size:11px;font-style:italic;color:var(--muted);margin-left:5px;font-weight:400;}
 .rank-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;flex-shrink:0;}
+.rank-badge.compact{padding:2px 7px 2px 3px;}
+.rank-icon{width:20px;height:20px;object-fit:contain;flex-shrink:0;display:block;}
+.rank-icon.lg{width:26px;height:26px;}
+
+/* SORTABLE / DATA TABLES */
+#app .stats-tbl td{white-space:nowrap;}
+#app .stats-tbl th{white-space:nowrap;}
+#app .stats-tbl th.l,#app .stats-tbl td.l{text-align:left;}
+.stats-tbl th.sortable{cursor:pointer;user-select:none;transition:color .15s;}
+.stats-tbl th.sortable:hover{color:var(--text);}
+.stats-tbl th.sorted{color:var(--blue);}
+.sort-arrow{display:inline-block;width:9px;font-size:8px;margin-left:2px;vertical-align:1px;}
+.stats-tbl .num{font-family:'DM Mono',monospace;font-variant-numeric:tabular-nums;}
+.pl-cell{display:flex;align-items:center;gap:8px;}
+.sticky-first td:first-child,.sticky-first th:first-child{position:sticky;left:0;background:var(--surface);z-index:1;}
+.stats-tbl td.pos{font-family:'DM Mono',monospace;font-weight:700;color:var(--muted);width:24px;text-align:center;}
+.stats-tbl td.pos.r1{color:var(--gold);}
+.stats-tbl td.pos.r2{color:var(--silver);}
+.stats-tbl td.pos.r3{color:var(--bronze);}
+.stats-tbl tr.is-retired td{opacity:.6;}
+.tbl-controls{display:flex;gap:10px;align-items:center;margin-bottom:6px;}
+.tbl-controls select{flex:1;}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap;cursor:pointer;}
+.chk input{accent-color:var(--blue);width:15px;height:15px;cursor:pointer;}
+.tbl-note{font-size:11px;color:var(--muted);margin-bottom:12px;}
+@media(max-width:480px){
+  #app .stats-tbl{font-size:12px;}
+  #app .stats-tbl th,#app .stats-tbl td{padding-left:4px;padding-right:4px;}
+  #app .stats-tbl td.pos{width:18px;}
+  #pub-lb .pl-cell .avatar{display:none;}
+  #pub-lb .rank-badge.compact{padding:1px 6px 1px 2px;gap:3px;}
+  #pub-lb .rank-icon{width:18px;height:18px;}
+}
+
 .player-row.retired{opacity:.55;}
 
 /* LEADERBOARD */
@@ -465,9 +499,10 @@ input[type=number]{width:auto;}
         <select id="adm-season-sel" onchange="renderStatsTable()" style="width:auto;font-size:13px;padding:6px 10px;"></select>
       </div>
     </div>
-    <div class="card" style="overflow-x:auto;padding:16px 8px;">
-      <table class="stats-tbl">
-        <thead><tr><th>Player</th><th>Rank</th><th>G</th><th>W-L</th><th>W%</th><th>Elo</th><th>±5g</th><th>PF</th><th>PA</th><th>+/-</th></tr></thead>
+    <div style="margin-bottom:8px;"><label class="chk"><input type="checkbox" onchange="showRetiredStats=this.checked;renderStatsTable()">Show retired players</label></div>
+    <div class="card" style="overflow-x:auto;padding:16px 0;">
+      <table class="stats-tbl sticky-first">
+        <thead id="stats-thead"></thead>
         <tbody id="stats-tbody"></tbody>
       </table>
     </div>
@@ -627,20 +662,68 @@ function computeRank(player){
   };
 }
 
-function rankBadgeHTML(rank){
+const RANK_ICON_DIR = 'assets/ranks/';
+
+// Tier image with emoji fallback if the file is missing
+function tierIconHTML(t, cls='rank-icon'){
+  return `<img class="${cls}" src="${RANK_ICON_DIR}rank-${t.name.toLowerCase()}.png" alt="${t.name}" onerror="this.outerHTML='${t.icon}'">`;
+}
+
+// compact = icon + division only (tables, team cards); full = icon + full label
+function rankBadgeHTML(rank, compact=false){
   if(rank.status === 'placement'){
-    return `<span class="rank-badge" style="background:#F2F2F2;color:var(--muted);" title="Plays ${RANK.PLACEMENT_GAMES} games before getting a rank">❔ ${rank.label}</span>`;
+    const txt = compact ? `${rank.played}/${RANK.PLACEMENT_GAMES}` : rank.label;
+    return `<span class="rank-badge" style="background:#F2F2F2;color:var(--muted);" title="Unranked: plays ${RANK.PLACEMENT_GAMES} games before getting a rank">❔ ${txt}</span>`;
   }
   if(rank.status === 'legend'){
     const pt = TIERS[rank.peakTierIdx];
-    return `<span class="rank-badge" style="background:${pt.bg};color:${pt.fg};" title="Retired. Peak rank: ${pt.name}">${pt.icon} Legend</span>`;
+    return `<span class="rank-badge${compact?' compact':''}" style="background:${pt.bg};color:${pt.fg};" title="Retired. Peak rank: ${pt.name}">${tierIconHTML(pt)}Legend</span>`;
   }
   const t = TIERS[rank.tierIdx];
   const flair = rank.promoWatch ? ' 🔥' : rank.shielded ? ' 🛡️' : '';
-  const tip = rank.promoWatch ? 'Promo watch: close to the next tier'
-            : rank.shielded ? 'Demotion shield: just below this tier'
-            : `Peak: ${rank.peakLabel}`;
-  return `<span class="rank-badge" style="background:${t.bg};color:${t.fg};" title="${tip}">${t.icon} ${rank.label}${flair}</span>`;
+  const tip = `${rank.label}` + (rank.promoWatch ? ' · Promo watch: close to the next tier'
+            : rank.shielded ? ' · Demotion shield: just below this tier' : '')
+            + ` · Peak: ${rank.peakLabel}`;
+  const txt = compact ? (rank.division || t.name) : rank.label;
+  return `<span class="rank-badge${compact?' compact':''}" style="background:${t.bg};color:${t.fg};" title="${tip}">${tierIconHTML(t)}${txt}${flair}</span>`;
+}
+
+// Higher = better. Placement players sort below everyone ranked.
+function rankSortValue(rank, elo){
+  if(rank.status === 'placement') return -100000 + elo;
+  return rank.tierIdx * 10000 + elo;
+}
+
+// ─── sortable tables ───
+const sortState = {
+  lb:    { key:'rank', dir:-1 },
+  stats: { key:'rank', dir:-1 },
+};
+let showRetiredLb = false;
+let showRetiredStats = false;
+
+function sortRows(rows, table){
+  const { key, dir } = sortState[table];
+  return rows.sort((a,b)=>{
+    const va=a.sort[key], vb=b.sort[key];
+    if(va==null && vb==null) return 0;
+    if(va==null) return 1;          // blanks always last
+    if(vb==null) return -1;
+    if(typeof va==='string') return va.localeCompare(vb)*dir;
+    return ((va-vb)*dir) || (b.sort.elo-a.sort.elo);
+  });
+}
+
+function thSort(table, key, label, cls=''){
+  const s=sortState[table], on=s.key===key;
+  return `<th class="sortable${on?' sorted':''}${cls?' '+cls:''}" onclick="setSort('${table}','${key}')">${label}<span class="sort-arrow">${on?(s.dir<0?'▼':'▲'):''}</span></th>`;
+}
+
+function setSort(table, key){
+  const s=sortState[table];
+  if(s.key===key) s.dir*=-1;
+  else { s.key=key; s.dir=(key==='name')?1:-1; }
+  if(table==='lb') renderPubLb(); else renderStatsTable();
 }
 
 // ═══════════════════════════════════════
@@ -1041,19 +1124,21 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
     return `<div class="player-row${swappable?' selectable':''}" ${dragAttrs} ${ctxAttr} style="${afBorder}">
       ${swappable?'<span class="drag-handle">⠿</span>':''}
       ${avatarHTML(p.name,idx,28)}
-      <div style="flex:1;">
-        <div style="font-size:13px;font-weight:500;">${p.name}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</div>
         ${showStats?`<div class="player-sub">Elo ${p.elo_rating||1000} · sk ${p.skill} · cs ${cs.toFixed(2)}</div>`:''}
       </div>
+      ${rankBadgeHTML(computeRank(p),true)}
       ${showStats?skillBadge(p.skill):''}
     </div>`;
   }).join('');
   const avgElo = players.length ? Math.round(players.reduce((s,p)=>s+(p.elo_rating||1000),0)/players.length) : '—';
   const avgCs = players.length ? (players.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/players.length).toFixed(2) : '—';
-  const footer = showStats ? `<div class="team-card-footer">
+  const footer = `<div class="team-card-footer">
+    <span><strong style="font-family:'DM Mono',monospace;">${players.length}</strong> players</span>
     <span>Avg Elo <strong style="font-family:'DM Mono',monospace;">${avgElo}</strong></span>
-    <span>Avg cs <strong style="font-family:'DM Mono',monospace;">${avgCs}</strong></span>
-  </div>` : '';
+    ${showStats?`<span>Avg cs <strong style="font-family:'DM Mono',monospace;">${avgCs}</strong></span>`:''}
+  </div>`;
   return `<div class="team-card">
     <div class="team-banner team-banner-${team}">${label}</div>
     <div class="team-card-body" ${bodyDrop}>${rows}</div>
@@ -1061,65 +1146,60 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
   </div>`;
 }
 
+// One leaderboard: rank & Elo (all-time) plus W-L for the selected season. Sortable.
 function renderPubLb(){
   const el = document.getElementById('pub-lb');
   const seasons = getSeasons();
   const prev = document.getElementById('pub-season-sel')?.value ?? 'all';
-  const seasonOpts = '<option value="all">All-time</option>'+seasons.map(s=>`<option value="${s}">${s}</option>`).join('');
-  const filteredGames = filterGamesBySeason(prev==='all'?null:prev);
+  const seasonOpts = '<option value="all">All-time record</option>'+seasons.map(s=>`<option value="${s}">${s} record</option>`).join('');
+  const games = filterGamesBySeason(prev==='all'?null:prev);
 
-  const wlLb = state.players.map(p=>{
-    const gc=playerGameCountFromGames(p.id,filteredGames);
-    const w=playerWinsFromGames(p.id,filteredGames);
-    return {p,gc,w,l:gc-w};
-  }).filter(x=>x.gc>0).sort((a,b)=>b.w-a.w||a.l-b.l);
+  const rows = state.players
+    .filter(p=>playerGameCount(p.id)>0 && (showRetiredLb||!p.retired))
+    .map(p=>{
+      const gc=playerGameCountFromGames(p.id,games);
+      const w=playerWinsFromGames(p.id,games);
+      const rank=computeRank(p);
+      const elo=p.elo_rating||1000;
+      return {p,rank,elo,gc,w,l:gc-w,pct:gc?Math.round(w/gc*100):null,
+        sort:{name:p.name.toLowerCase(),rank:rankSortValue(rank,elo),elo,w:gc?w:null,pct:gc?w/gc:null}};
+    });
+  sortRows(rows,'lb');
+  const top3 = sortState.lb.key==='rank' && sortState.lb.dir<0;
 
-  const eloLb=[...state.players].filter(p=>playerGameCount(p.id)>0)
-    .sort((a,b)=>(b.elo_rating||1000)-(a.elo_rating||1000));
+  const body = rows.length ? rows.map((r,i)=>{
+    const pc = top3 ? (i===0?' r1':i===1?' r2':i===2?' r3':'') : '';
+    return `<tr class="${r.p.retired?'is-retired':''}">
+      <td class="pos${pc}">${i+1}</td>
+      <td class="l"><div class="pl-cell">${avatarHTML(r.p.name,playerIdx(r.p.id),26)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
+      <td class="l">${rankBadgeHTML(r.rank,true)}</td>
+      <td class="num" style="color:var(--blue);font-weight:600;">${r.elo}</td>
+      <td class="num">${r.gc?`${r.w}–${r.l}`:'—'}</td>
+      <td class="num">${r.pct!=null?r.pct+'%':'—'}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="6"><div class="empty">No games yet.</div></td></tr>';
 
+  const retiredCount = state.players.filter(p=>p.retired&&playerGameCount(p.id)>0).length;
   el.innerHTML=`
-    <div style="margin-bottom:16px;">
-      <select id="pub-season-sel" onchange="renderPubLb()" style="width:100%;">${seasonOpts}</select>
+    <div class="tbl-controls">
+      <select id="pub-season-sel" onchange="renderPubLb()">${seasonOpts}</select>
+      ${retiredCount?`<label class="chk"><input type="checkbox" ${showRetiredLb?'checked':''} onchange="showRetiredLb=this.checked;renderPubLb()">Retired</label>`:''}
     </div>
-    <div class="sec-title">W-L Record</div>
-    <div class="card" style="padding:8px 16px;">${wlLbHTML(wlLb)}</div>
-    <div class="sec-title">Elo ratings</div>
-    <div class="card" style="padding:8px 16px;">${eloLbHTML(eloLb)}</div>`;
-
+    <div class="tbl-note">Rank and Elo are all-time. W-L follows the record selected above. Tap a column to sort.</div>
+    <div class="card" style="padding:8px 4px;overflow-x:auto;">
+      <table class="stats-tbl">
+        <thead><tr>
+          <th class="l" style="text-align:center;">#</th>
+          ${thSort('lb','name','Player','l')}
+          ${thSort('lb','rank','Rank','l')}
+          ${thSort('lb','elo','Elo')}
+          ${thSort('lb','w','W-L')}
+          ${thSort('lb','pct','W%')}
+        </tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
   document.getElementById('pub-season-sel').value=prev;
-}
-
-function wlLbHTML(lb){
-  if(!lb.length) return '<div class="empty">No games yet.</div>';
-  return lb.map((x,r)=>{
-    const idx=playerIdx(x.p.id);
-    const pct=x.gc>0?Math.round(x.w/x.gc*100):0;
-    const rc=r===0?'r1':r===1?'r2':r===2?'r3':'';
-    return `<div class="lb-row">
-      <span class="lb-rank ${rc}">${r+1}</span>
-      ${avatarHTML(x.p.name,idx,28)}
-      <span style="flex:1;font-size:14px;font-weight:500;">${x.p.name}${retTag(x.p)}</span>
-      <span class="lb-stat">${x.w}W–${x.l}L</span>
-      <div class="pct-wrap"><div class="pct-bar" style="width:${pct}%;"></div></div>
-      <span style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;min-width:34px;text-align:right;">${pct}%</span>
-    </div>`;
-  }).join('');
-}
-
-function eloLbHTML(players){
-  if(!players.length) return '<div class="empty">No games yet.</div>';
-  return players.map((p,r)=>{
-    const idx=playerIdx(p.id);
-    const elo=p.elo_rating||1000;
-    const rc=r===0?'r1':r===1?'r2':r===2?'r3':'';
-    return `<div class="lb-row">
-      <span class="lb-rank ${rc}">${r+1}</span>
-      ${avatarHTML(p.name,idx,28)}
-      <span style="flex:1;font-size:14px;font-weight:500;min-width:0;">${p.name}${retTag(p)}</span>
-      ${rankBadgeHTML(computeRank(p))}
-      <span class="lb-elo" style="min-width:38px;text-align:right;">${elo}</span>
-    </div>`;
-  }).join('');
 }
 
 function renderPubDuos(){
@@ -2215,42 +2295,15 @@ async function updateH2H(game){
   }
 }
 
+// Same maths as the rating system: team-average Elo -> expected win probability.
 function computePredictionPcts(ninjaIds, mamieIds){
   const ninjas=ninjaIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   const mamies=mamieIds.map(id=>state.players.find(p=>p.id===id)).filter(Boolean);
   if(!ninjas.length||!mamies.length) return null;
-  const nAvgCs=ninjas.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/ninjas.length;
-  const mAvgCs=mamies.reduce((s,p)=>s+compositeScore(p,playerGameCount(p.id)),0)/mamies.length;
-  const baseEdge=nAvgCs-mAvgCs;
-  const duoBonus=(ids)=>{
-    let bonus=0;
-    for(let i=0;i<ids.length;i++){
-      for(let j=i+1;j<ids.length;j++){
-        const a=Math.min(ids[i],ids[j]),b=Math.max(ids[i],ids[j]);
-        const d=state.duoStats.find(x=>x.player_a_id===a&&x.player_b_id===b);
-        if(!d||d.games_together<5) continue;
-        const wr=d.wins_together/d.games_together;
-        if(wr>0.55) bonus+=Math.min(0.06,(wr-0.5)*0.04);
-      }
-    }
-    return bonus;
-  };
-  const duoEdge=duoBonus(ninjaIds)-duoBonus(mamieIds);
-  let h2hEdge=0;
-  for(const nId of ninjaIds){
-    for(const mId of mamieIds){
-      const a=Math.min(nId,mId),b=Math.max(nId,mId);
-      const h=state.h2h.find(x=>x.player_a_id===a&&x.player_b_id===b);
-      if(!h||h.games<5) continue;
-      const aIsNinja=nId<mId;
-      const nWins=aIsNinja?h.player_a_wins:h.player_b_wins;
-      const mWins=aIsNinja?h.player_b_wins:h.player_a_wins;
-      h2hEdge+=(nWins-mWins)/h.games*0.02;
-    }
-  }
-  const totalEdge=(baseEdge*0.50)+(duoEdge*0.25)+(h2hEdge*0.25);
-  const ninjaPct=Math.max(30,Math.min(70,Math.round(50+totalEdge*100)));
-  return {ninjaPct,mamiePct:100-ninjaPct,nAvgCs,mAvgCs,ninjaIds,mamieIds};
+  const avg=arr=>arr.reduce((s,p)=>s+(p.elo_rating||1000),0)/arr.length;
+  const nAvg=avg(ninjas), mAvg=avg(mamies);
+  const ninjaPct=Math.max(1,Math.min(99,Math.round(eloExpected(nAvg,mAvg)*100)));
+  return {ninjaPct,mamiePct:100-ninjaPct,nAvg,mAvg,ninjaIds,mamieIds};
 }
 
 function computePrediction(){
@@ -2259,17 +2312,18 @@ function computePrediction(){
   if(!ninjaIds.length||!mamieIds.length) return null;
   const pcts=computePredictionPcts(ninjaIds,mamieIds);
   if(!pcts) return null;
-  const {ninjaPct,mamiePct,nAvgCs,mAvgCs}=pcts;
+  const {ninjaPct,mamiePct,nAvg,mAvg}=pcts;
 
-  // Key factors
+  // Key factors (the percentage comes from Elo only; duo/H2H lines are context)
   const factors=[];
-  const csDiff=nAvgCs-mAvgCs;
-  if(Math.abs(csDiff)<0.02){
-    factors.push('Teams are evenly matched');
+  const eloDiff=Math.round(nAvg-mAvg);
+  if(Math.abs(eloDiff)<15){
+    factors.push(`Evenly matched: avg Elo ${Math.round(nAvg)} vs ${Math.round(mAvg)}`);
   } else {
-    const fav=csDiff>0?'Ninja Warriors':'Les mamies en bikini';
-    factors.push(`${fav} has a higher avg rating (+${Math.abs(csDiff*100).toFixed(0)})`);
+    const fav=eloDiff>0?'Ninja Warriors':'Les mamies en bikini';
+    factors.push(`${fav} average ${Math.abs(eloDiff)} more Elo (${Math.round(Math.max(nAvg,mAvg))} vs ${Math.round(Math.min(nAvg,mAvg))})`);
   }
+  if(ninjaIds.length!==mamieIds.length) factors.push(`${ninjaIds.length} vs ${mamieIds.length} players (team size isn't factored in)`);
 
   // Top qualifying duo per team
   const topDuo=(ids)=>{
@@ -2320,7 +2374,7 @@ function computePrediction(){
   }
   if(!hasHistory) factors.push('Not enough history for duo/H2H factors yet');
 
-  return {ninjaPct,mamiePct,factors:factors.slice(0,4)};
+  return {ninjaPct,mamiePct,factors:factors.slice(0,5)};
 }
 
 function renderPredictionCard(){
@@ -2398,7 +2452,7 @@ function showPlayerModal(id){
     <div style="margin-bottom:16px;">
       <div class="modal-sec-title">Rank</div>
       <div class="modal-stat-row"><span>Current</span>${rankBadgeHTML(rank)}</div>
-      ${rank.status!=='placement'?`<div class="modal-stat-row"><span>Peak</span><span style="font-weight:600;">${TIERS[rank.peakTierIdx].icon} ${rank.peakLabel}</span></div>`:''}
+      ${rank.status!=='placement'?`<div class="modal-stat-row"><span>Peak</span><span style="font-weight:600;display:inline-flex;align-items:center;gap:6px;">${tierIconHTML(TIERS[rank.peakTierIdx])}${rank.peakLabel}</span></div>`:''}
       ${rank.status==='ranked'&&TIERS[rank.tierIdx+1]?`<div class="modal-stat-row"><span>To ${TIERS[rank.tierIdx+1].name}</span><span style="font-family:'DM Mono',monospace;font-weight:600;">${Math.max(0,TIERS[rank.tierIdx+1].min-rank.elo)} Elo</span></div>`:''}
     </div>
     <div style="margin-bottom:16px;">
@@ -2465,38 +2519,54 @@ function renderStatsTab(){
 function renderStatsTable(){
   const seasonName=document.getElementById('adm-season-sel')?.value??'all';
   const games=filterGamesBySeason(seasonName==='all'?null:seasonName);
+  document.getElementById('stats-thead').innerHTML=`<tr>
+    ${thSort('stats','name','Player','l')}
+    ${thSort('stats','rank','Rank','l')}
+    ${thSort('stats','gc','G')}
+    ${thSort('stats','w','W-L')}
+    ${thSort('stats','pct','W%')}
+    ${thSort('stats','elo','Elo')}
+    ${thSort('stats','d5','±5g')}
+    ${thSort('stats','pf','PF')}
+    ${thSort('stats','pa','PA')}
+    ${thSort('stats','diff','+/-')}
+  </tr>`;
   const tbody=document.getElementById('stats-tbody');
   const rows=state.players.map(p=>{
+    if(p.retired&&!showRetiredStats) return null;
     const gc=playerGameCountFromGames(p.id,games); if(!gc) return null;
     const w=playerWinsFromGames(p.id,games);
     const l=gc-w;
     const pct=Math.round(w/gc*100);
     const elo=p.elo_rating||1000;
+    const rank=computeRank(p);
     const hist5=state.eloHistory.filter(h=>h.player_id===p.id).slice(-5);
     const d5=hist5.reduce((s,h)=>s+h.change,0);
     const sgc=playerScoredGameCountFromGames(p.id,games);
     const pf=sgc?playerPointsForFromGames(p.id,games):null;
     const pa=sgc?playerPointsAgainstFromGames(p.id,games):null;
     const diff=sgc?pf-pa:null;
-    return {p,gc,w,l,pct,elo,d5,pf,pa,diff};
-  }).filter(Boolean).sort((a,b)=>b.w-a.w);
+    return {p,gc,w,l,pct,elo,rank,d5,pf,pa,diff,
+      sort:{name:p.name.toLowerCase(),rank:rankSortValue(rank,elo),gc,w,pct:w/gc,elo,d5,pf,pa,diff}};
+  }).filter(Boolean);
+  sortRows(rows,'stats');
   if(!rows.length){ tbody.innerHTML='<tr><td colspan="10"><div class="empty">No data yet.</div></td></tr>'; return; }
   tbody.innerHTML=rows.map(r=>{
     const idx=playerIdx(r.p.id);
     const dc=r.d5>0?'color:var(--success)':r.d5<0?'color:var(--danger)':'color:var(--muted)';
     const diffColor=r.diff==null?'color:var(--muted)':r.diff>0?'color:var(--success)':r.diff<0?'color:var(--danger)':'color:var(--muted)';
-    const diffStr=r.diff==null?'—':r.diff>0?`+${r.diff}`:r.diff<0?`\u2212${Math.abs(r.diff)}`:'0';
-    return `<tr>
-      <td><div style="display:flex;align-items:center;gap:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
-      <td>${rankBadgeHTML(computeRank(r.p))}</td>
-      <td style="font-family:'DM Mono',monospace;">${r.gc}</td>
-      <td style="font-family:'DM Mono',monospace;">${r.w}–${r.l}</td>
-      <td style="font-family:'DM Mono',monospace;">${r.pct}%</td>
-      <td style="font-family:'DM Mono',monospace;color:var(--blue);">${r.elo}</td>
-      <td style="font-family:'DM Mono',monospace;${dc};">${r.d5>=0?'+':''}${r.d5}</td>
-      <td style="font-family:'DM Mono',monospace;">${r.pf??'—'}</td>
-      <td style="font-family:'DM Mono',monospace;">${r.pa??'—'}</td>
-      <td style="font-family:'DM Mono',monospace;${diffColor};">${diffStr}</td>
+    const diffStr=r.diff==null?'—':r.diff>0?`+${r.diff}`:r.diff<0?`−${Math.abs(r.diff)}`:'0';
+    return `<tr class="${r.p.retired?'is-retired':''}">
+      <td class="l"><div class="pl-cell" style="padding-left:8px;">${avatarHTML(r.p.name,idx,24)}<span>${r.p.name}${retTag(r.p)}</span></div></td>
+      <td class="l">${rankBadgeHTML(r.rank,true)}</td>
+      <td class="num">${r.gc}</td>
+      <td class="num">${r.w}–${r.l}</td>
+      <td class="num">${r.pct}%</td>
+      <td class="num" style="color:var(--blue);">${r.elo}</td>
+      <td class="num" style="${dc};">${r.d5>=0?'+':''}${r.d5}</td>
+      <td class="num">${r.pf??'—'}</td>
+      <td class="num">${r.pa??'—'}</td>
+      <td class="num" style="${diffColor};padding-right:16px;">${diffStr}</td>
     </tr>`;
   }).join('');
 }
