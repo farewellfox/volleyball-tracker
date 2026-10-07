@@ -259,7 +259,30 @@ tr.clickable:hover td{background:rgba(255,255,255,.03);}
 .pp-grid th:first-child,.pp-grid td:first-child{text-align:left;}
 .pp-grid td{padding:7px 0;border-top:1px solid var(--border);text-align:right;font-weight:600;}
 .pp-grid td:first-child{font-weight:400;color:var(--muted);}
-.pp-chart{position:relative;height:200px;}
+.pp-chart{position:relative;height:210px;}
+.pp-tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:0 -2px 16px;padding:0 2px;}
+.pp-tabs::-webkit-scrollbar{display:none;}
+.pp-tab{display:inline-flex;align-items:center;gap:5px;padding:5px 10px 5px 5px;border-radius:999px;border:1px solid var(--border-strong);background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;flex-shrink:0;}
+.pp-tab:last-child{padding-left:10px;}
+.pp-tab .rank-icon{width:20px;height:20px;}
+.pp-tab.on{background:var(--raised);color:var(--text);border-color:var(--accent);}
+.pp-tab-q{width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.07);display:inline-flex;align-items:center;justify-content:center;font-size:12px;}
+.pp-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px;}
+.pp-sum-cell{background:var(--raised);border-radius:var(--r-sm);padding:10px 12px;display:flex;flex-direction:column;gap:3px;min-width:0;}
+.pp-sum-k{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);}
+.pp-sum-v{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:700;white-space:nowrap;}
+.pp-sum-v .rank-icon{width:24px;height:24px;}
+.pp-sum-s{font-size:11px;color:var(--dim);}
+.pp-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:6px 0 20px;}
+.pp-tile{background:var(--raised);border-radius:var(--r-sm);padding:10px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0;}
+.pp-tile-v{font-family:var(--display);font-weight:900;font-size:24px;line-height:1;white-space:nowrap;}
+.pp-tile-k{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}
+.pp-sec{margin-bottom:18px;}
+.rel-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:14px;}
+.rel-row:last-child{border-bottom:none;}
+.rel-k{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);width:112px;flex-shrink:0;white-space:nowrap;}
+.rel-name{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rel-v{font-weight:600;}
 
 /* RECAPS */
 .records{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:22px;}
@@ -815,8 +838,10 @@ function computeRank(player, ctx){
     const needed = lifetime > 0 ? RANK.SEASON_PLACEMENT : RANK.PLACEMENT_GAMES;
     const res = g.rows.length >= needed ? walkTiers(g.rows, needed - 1) : null;
     const finalElo = g.rows[g.rows.length - 1].rating_after;
+    // promotions are instant, so the season peak is simply the best rating after placements
+    const peakElo = res ? Math.max(...g.rows.slice(needed - 1).map(r => r.rating_after)) : null;
     seasons.push({ season: g.season, games: g.rows.length, needed, ranked: !!res,
-      tierIdx: res ? res.tier : null, peakTierIdx: res ? res.peak : null, finalElo });
+      tierIdx: res ? res.tier : null, peakTierIdx: res ? res.peak : null, finalElo, peakElo });
     if(res) allTimePeak = Math.max(allTimePeak, res.peak);
     lifetime += g.rows.length;
   }
@@ -824,7 +849,9 @@ function computeRank(player, ctx){
   const base = { seasons, allTimePeakIdx: allTimePeak };
   if(player.retired){
     const peak = allTimePeak >= 0 ? allTimePeak : null;   // null = retired before ever ranking
+    const bestElo = Math.max(...seasons.filter(x=>x.ranked).map(x=>x.peakElo), -Infinity);
     return { ...base, status:'legend', peakTierIdx: peak, peakLabel: peak!=null ? TIERS[peak].name : null,
+      peakFull: peak!=null ? rankFromElo(bestElo).full : null,
       elo: hist.length ? hist[hist.length-1].rating_after : seedRating(player) };
   }
 
@@ -852,7 +879,16 @@ function computeRank(player, ctx){
     promoWatch: !!next && elo < next.min && next.min - elo <= RANK.PROMO_WATCH,
     peakTierIdx: entry.peakTierIdx,                // this season
     peakLabel: TIERS[entry.peakTierIdx].name,
+    peakFull: rankFromElo(entry.peakElo).full,     // e.g. "Diamond II · 72 RP"
   };
+}
+
+// Rank label + RP for any rating (used for peaks and chart markers)
+function rankFromElo(elo){
+  const ti = rawTierIdx(elo), d = divisionLabel(elo, ti), t = TIERS[ti];
+  const rp = rankProgress({ status:'ranked', tierIdx: ti, elo, shielded:false }).short;
+  const label = `${t.name}${d ? ' ' + d : ''}`;
+  return { tierIdx: ti, division: d, label, rp, full: t.name==='Ace' ? `Ace · ${rp} RP` : `${label} · ${rp} RP` };
 }
 
 // Progress inside the current division as 0-100 rank points (RP). Hides raw Elo.
@@ -892,13 +928,13 @@ function rankBadgeHTML(rank, compact=false){
   if(rank.status === 'legend'){
     if(rank.peakTierIdx == null) return `<span class="rank-badge" style="background:rgba(255,255,255,.07);color:var(--muted);" title="Retired before finishing placements">Retired</span>`;
     const pt = TIERS[rank.peakTierIdx];
-    return `<span class="rank-badge${compact?' compact':''}" style="background:${pt.bg};color:${pt.fg};" title="Retired. Peak rank: ${pt.name}">${tierIconHTML(pt)}Legend</span>`;
+    return `<span class="rank-badge${compact?' compact':''}" style="background:${pt.bg};color:${pt.fg};" title="Retired. Peak rank: ${rank.peakFull}">${tierIconHTML(pt)}Legend</span>`;
   }
   const t = TIERS[rank.tierIdx];
   const flair = rank.promoWatch ? ' 🔥' : rank.shielded ? ' 🛡️' : '';
   const tip = `${rank.label}` + (rank.promoWatch ? ' · Promo watch: close to the next tier'
             : rank.shielded ? ' · Demotion shield: just below this tier' : '')
-            + ` · Season peak: ${rank.peakLabel}`;
+            + ` · Season peak: ${rank.peakFull}`;
   const txt = compact ? (rank.division || t.name) : rank.label;
   return `<span class="rank-badge${compact?' compact':''}" style="background:${t.bg};color:${t.fg};" title="${tip}">${tierIconHTML(t)}${txt}${flair}</span>`;
 }
@@ -1581,15 +1617,17 @@ function seasonRecords(){
   for(const h of state.eloHistory){ if(!rowsByGame.has(h.game_id)) rowsByGame.set(h.game_id, []); rowsByGame.get(h.game_id).push(h); }
   const sessDate = id => { const s=state.sessions.find(x=>x.id===id); return s ? new Date(s.date+'T12:00:00').toLocaleDateString('en-CA',{month:'short',day:'numeric'}) : ''; };
 
-  // longest win streak
-  const run = new Map(); let streak=null;
+  // longest win streak, with when it started/ended and whether it's still alive
+  const run = new Map(), runStart = new Map(); let streak=null;
   for(const g of games){
     const sides=[[g.ninja_ids,g.winner==='ninja'],[g.mamie_ids,g.winner==='mamie']];
     for(const [ids,won] of sides) for(const id of (ids||[]).map(Number)){
       const n = won ? (run.get(id)||0)+1 : 0; run.set(id,n);
-      if(n>0 && (!streak || n>streak.n)) streak={ p: byId.get(id), n };
+      if(n===1) runStart.set(id,g);
+      if(n>0 && (!streak || n>streak.n)) streak={ id, p: byId.get(id), n, start: runStart.get(id), end: g };
     }
   }
+  if(streak) streak.active = run.get(streak.id)===streak.n && runStart.get(streak.id)===streak.start;
   // biggest blowout
   let blow=null;
   for(const g of games){ if(g.score_ninja==null||g.score_mamie==null) continue; const d=Math.abs(g.score_ninja-g.score_mamie); if(!blow||d>blow.d) blow={g,d}; }
@@ -1643,7 +1681,7 @@ function renderPubRecaps(){
   const rec = seasonRecords();
   const recordsHTML = rec ? `<div class="sec-title">${rec.cur} records</div>
     <div class="records">
-      <div class="record"><span class="record-k">Win streak</span><span class="record-v">${rec.streak?rec.streak.n:'—'}</span><span class="record-who">${rec.streak?rec.streak.p.name:'—'}</span><span class="record-sub">games in a row</span></div>
+      <div class="record"><span class="record-k">Longest win streak</span><span class="record-v">${rec.streak?rec.streak.n:'—'}</span><span class="record-who">${rec.streak?rec.streak.p.name:'—'}</span><span class="record-sub">${rec.streak?(rec.streak.active?`since ${rec.sessDate(rec.streak.start.session_id)} · <span style="color:var(--success);font-weight:700;">still going</span>`:(rec.sessDate(rec.streak.start.session_id)===rec.sessDate(rec.streak.end.session_id)?rec.sessDate(rec.streak.start.session_id):`${rec.sessDate(rec.streak.start.session_id)} – ${rec.sessDate(rec.streak.end.session_id)}`)):''}</span></div>
       <div class="record"><span class="record-k">Biggest climb</span><span class="record-v">${rec.climb?'+'+Math.round(rec.climb.d*RP_PER_ELO):'—'}</span><span class="record-who">${rec.climb?rec.climb.p.name:'—'}</span><span class="record-sub">RP this season</span></div>
       <div class="record"><span class="record-k">Biggest upset</span><span class="record-v">${rec.upset?Math.round(rec.upset.c*100)+'%':'—'}</span><span class="record-who">${rec.upset?teamWord(rec.upset.g.winner)+' won':'—'}</span><span class="record-sub">${rec.upset?'win chance · '+rec.sessDate(rec.upset.g.session_id):''}</span></div>
       <div class="record"><span class="record-k">Biggest blowout</span><span class="record-v">${rec.blow?`${rec.blow.g.score_ninja}–${rec.blow.g.score_mamie}`:'—'}</span><span class="record-who">${rec.blow?teamWord(rec.blow.g.winner)+' by '+rec.blow.d:'—'}</span><span class="record-sub">${rec.blow?rec.sessDate(rec.blow.g.session_id):''}</span></div>
@@ -2862,7 +2900,8 @@ function showRanksInfo(){
 // ═══════════════════════════════════════
 // PLAYER PAGE (public + admin)
 // ═══════════════════════════════════════
-let playerChart = null;
+let playerChart = null;          // kept for closePlayerModal; the rank chart is drawn on a plain canvas
+const ALL_TIME = '__all';
 
 function seasonRecord(id, games){
   const gc=playerGameCountFromGames(id,games), w=playerWinsFromGames(id,games);
@@ -2871,157 +2910,196 @@ function seasonRecord(id, games){
   return {gc,w,l:gc-w,pct:gc?Math.round(w/gc*100):null,diff};
 }
 
-function showPlayerModal(id, admin){
-  if(admin===undefined) admin = isAdmin && document.getElementById('page-admin').classList.contains('active');
-  const p=state.players.find(pl=>pl.id===id); if(!p) return;
-  const idx=playerIdx(id);
-  const rank=computeRank(p);
-  const pr=rankProgress(rank);
-  const cur=currentSeason();
-  const elo=p.elo_rating||1000;
+// One line per relationship, all-time: best teammate, who you own, your nemesis
+function relationsHTML(id){
+  const duo=state.duoStats
+    .filter(d=>(d.player_a_id===id||d.player_b_id===id)&&d.games_together>=5)
+    .map(d=>({p:state.players.find(pl=>pl.id===(d.player_a_id===id?d.player_b_id:d.player_a_id)),w:d.wins_together,l:d.games_together-d.wins_together,pct:d.wins_together/d.games_together}))
+    .filter(x=>x.p).sort((a,b)=>b.pct-a.pct||b.w-a.w)[0];
+  const h2h=state.h2h
+    .filter(h=>(h.player_a_id===id||h.player_b_id===id)&&h.games>=5)
+    .map(h=>{ const mine=h.player_a_id===id; return {p:state.players.find(pl=>pl.id===(mine?h.player_b_id:h.player_a_id)),w:mine?h.player_a_wins:h.player_b_wins,l:mine?h.player_b_wins:h.player_a_wins}; })
+    .filter(x=>x.p);
+  const owns=[...h2h].sort((a,b)=>(b.w-b.l)-(a.w-a.l))[0];
+  const nem=[...h2h].sort((a,b)=>(a.w-a.l)-(b.w-b.l))[0];
+  const row=(k,x,col)=>x?`<div class="rel-row"><span class="rel-k">${k}</span><span class="rel-name">${x.p.name}</span><span class="rel-v"><b style="color:${col};">${x.w}</b>–${x.l}</span></div>`:'';
+  const out=[row('Best teammate',duo,'var(--success)'), (owns&&owns.w>owns.l)?row('Owns',owns,'var(--success)'):'', (nem&&nem.l>nem.w)?row('Nemesis',nem,'var(--danger)'):''].join('');
+  return out?`<div class="pp-sec"><div class="modal-sec-title">Rivalries <span style="text-transform:none;letter-spacing:0;font-weight:500;">· all-time, 5+ games</span></div>${out}</div>`:'';
+}
 
-  // header icon + rank line
+function showPlayerModal(id, admin, seasonSel){
+  if(admin===undefined || admin===null) admin = isAdmin && document.getElementById('page-admin').classList.contains('active');
+  const p=state.players.find(pl=>pl.id===id); if(!p) return;
+  const rank=computeRank(p);
+  const cur=currentSeason();
+  const played=rank.seasons.filter(x=>x.season);
+  // default tab: the current season if they played it, else their latest season
+  let sel = seasonSel || (played.some(x=>x.season===cur) ? cur : (played.length ? played[played.length-1].season : ALL_TIME));
+  const entry = played.find(x=>x.season===sel) || null;
+  const isAll = sel===ALL_TIME;
+  const isLive = !isAll && sel===cur && rank.status==='ranked';
+
+  // header: big badge + name + current rank
   let icon='', rankLine='', color='var(--muted)';
-  if(rank.status==='ranked'){
-    const t=TIERS[rank.tierIdx]; icon=tierIconHTML(t); color=t.name==='Ace'?'var(--gold)':t.fg;
-    rankLine=`${rank.label}${rank.promoWatch?' 🔥':rank.shielded?' 🛡️':''}`;
-  } else if(rank.status==='legend'){
-    if(rank.peakTierIdx!=null){ const t=TIERS[rank.peakTierIdx]; icon=tierIconHTML(t); color=t.fg; rankLine=`Legend · peak ${t.name}`; }
-    else rankLine='Retired';
-  } else {
-    rankLine=`Placement ${rank.played}/${rank.needed}`;
-  }
+  if(rank.status==='ranked'){ const t=TIERS[rank.tierIdx]; icon=tierIconHTML(t); color=t.fg; rankLine=`${rank.label}${rank.promoWatch?' 🔥':rank.shielded?' 🛡️':''}`; }
+  else if(rank.status==='legend'){ if(rank.peakTierIdx!=null){ const t=TIERS[rank.peakTierIdx]; icon=tierIconHTML(t); color=t.fg; rankLine='Legend'; } else rankLine='Retired'; }
+  else rankLine=`Placement ${rank.played}/${rank.needed}`;
   const head=`<div class="pp-head">
-      ${icon || avatarHTML(p.name,idx,64)}
+      ${icon || avatarHTML(p.name,playerIdx(id),64)}
       <div style="min-width:0;">
         <div class="pp-name">${p.name}</div>
         <div class="pp-rank" style="color:${color};">${rankLine}</div>
-        <div class="pp-meta">${admin?`Elo ${elo} · skill ${p.skill} · `:''}${cur&&rank.status!=='legend'?cur:''}</div>
+        ${admin?`<div class="pp-meta">Elo ${p.elo_rating||1000} · skill ${p.skill}</div>`:''}
       </div>
     </div>`;
 
-  const barColor = rank.status==='ranked' ? TIERS[rank.tierIdx].fg : '#6F7C8E';
-  const progress = rank.status==='legend' ? '' : `<div class="pp-progress">
-      <div class="bar"><span style="width:${pr.pct}%;background:${barColor};"></span></div>
-      <div class="txt"><span>${pr.long}</span>${rank.status==='ranked'?`<span>Season peak: ${rank.peakLabel}</span>`:''}</div>
-    </div>`;
+  // season tabs: each shows the badge that season ended on
+  const tabs = played.length ? `<div class="pp-tabs" role="tablist">${[...played].reverse().map(x=>{
+      const t = x.ranked ? TIERS[x.tierIdx] : null;
+      const on = x.season===sel;
+      return `<button type="button" role="tab" aria-selected="${on}" class="pp-tab${on?' on':''}" onclick="showPlayerModal(${id},${admin},'${String(x.season).replace(/'/g,"\\'")}')">${t?tierIconHTML(t):'<span class="pp-tab-q">?</span>'}<span>${x.season}</span></button>`;
+    }).join('')}<button type="button" role="tab" aria-selected="${isAll}" class="pp-tab${isAll?' on':''}" onclick="showPlayerModal(${id},${admin},'${ALL_TIME}')"><span>All-time</span></button></div>` : '';
 
-  // records: this season vs all-time
-  const seasonGames = cur ? filterGamesBySeason(cur) : [];
-  const rs = seasonRecord(id, seasonGames), ra = seasonRecord(id, state.games);
+  // rank summary for the selected tab
+  let summary='';
+  if(isAll){
+    const best=played.filter(x=>x.ranked).sort((a,b)=>b.peakElo-a.peakElo)[0];
+    if(best){ const pk=rankFromElo(best.peakElo), t=TIERS[pk.tierIdx];
+      summary=`<div class="pp-sum"><div class="pp-sum-cell"><span class="pp-sum-k">All-time peak</span><span class="pp-sum-v" style="color:${t.fg};">${tierIconHTML(t)}${pk.full}</span><span class="pp-sum-s">${best.season}</span></div></div>`; }
+  } else if(entry && entry.ranked){
+    const now = isLive ? {label:rank.label, rp:rankProgress(rank).short, tierIdx:rank.tierIdx} : rankFromElo(entry.finalElo);
+    const nowFull = isLive ? (TIERS[rank.tierIdx].name==='Ace'?`Ace · ${now.rp} RP`:`${rank.label} · ${now.rp} RP`) : rankFromElo(entry.finalElo).full;
+    const pk=rankFromElo(entry.peakElo);
+    const tn=TIERS[isLive?rank.tierIdx:now.tierIdx], tp=TIERS[pk.tierIdx];
+    summary=`<div class="pp-sum">
+      <div class="pp-sum-cell"><span class="pp-sum-k">${isLive?'Now':'Finished'}</span><span class="pp-sum-v" style="color:${tn.fg};">${tierIconHTML(tn)}${nowFull}</span></div>
+      <div class="pp-sum-cell"><span class="pp-sum-k">Peak</span><span class="pp-sum-v" style="color:${tp.fg};">${tierIconHTML(tp)}${pk.full}</span></div>
+    </div>`;
+    if(isLive){
+      const pr=rankProgress(rank);
+      summary+=`<div class="pp-progress"><div class="bar"><span style="width:${pr.pct}%;background:${TIERS[rank.tierIdx].fg};"></span></div><div class="txt"><span>${pr.long}</span></div></div>`;
+    }
+  } else if(entry){
+    summary=`<div class="pp-sum"><div class="pp-sum-cell"><span class="pp-sum-k">Unranked</span><span class="pp-sum-v" style="color:var(--muted);">${entry.games} of ${entry.needed} placement games</span></div></div>`;
+  }
+
+  // stat tiles for the selected tab
+  const games = isAll ? state.games : filterGamesBySeason(sel);
+  const r = seasonRecord(id, games);
   const fmtDiff = d => d==null?'—':d>0?`+${d}`:d<0?`−${Math.abs(d)}`:'0';
-  const records=`<div style="margin-bottom:18px;">
-    <table class="pp-grid">
-      <tr><th></th><th>${cur||'Season'}</th><th>All-time</th></tr>
-      <tr><td>Games</td><td>${rs.gc}</td><td>${ra.gc}</td></tr>
-      <tr><td>Record</td><td>${rs.gc?`${rs.w}–${rs.l}`:'—'}</td><td>${ra.gc?`${ra.w}–${ra.l}`:'—'}</td></tr>
-      <tr><td>Win rate</td><td>${rs.pct!=null?rs.pct+'%':'—'}</td><td>${ra.pct!=null?ra.pct+'%':'—'}</td></tr>
-      <tr><td>Point diff</td><td>${fmtDiff(rs.diff)}</td><td>${fmtDiff(ra.diff)}</td></tr>
-    </table></div>`;
+  const tiles=`<div class="pp-tiles">
+    <div class="pp-tile"><span class="pp-tile-v">${r.gc}</span><span class="pp-tile-k">Games</span></div>
+    <div class="pp-tile"><span class="pp-tile-v">${r.gc?`${r.w}–${r.l}`:'—'}</span><span class="pp-tile-k">Record</span></div>
+    <div class="pp-tile"><span class="pp-tile-v">${r.pct!=null?r.pct+'%':'—'}</span><span class="pp-tile-k">Win rate</span></div>
+    <div class="pp-tile"><span class="pp-tile-v" style="color:${r.diff>0?'var(--success)':r.diff<0?'var(--danger)':'var(--text)'};">${fmtDiff(r.diff)}</span><span class="pp-tile-k">Point diff</span></div>
+  </div>`;
 
-  // rank history, newest first
-  const chips = [...rank.seasons].reverse().map(x=>{
-    if(!x.ranked) return `<div class="season-chip"><span style="font-size:20px;width:28px;text-align:center;">❔</span>
-      <div><div class="sn">${x.season||'No season'}</div><div class="sm">Unranked · ${x.games} game${x.games===1?'':'s'}</div></div></div>`;
-    const t=TIERS[x.tierIdx], div=divisionLabel(x.finalElo,x.tierIdx);
-    const live = x.season===cur && rank.status==='ranked';
-    return `<div class="season-chip" style="background:${t.band};">
-      ${tierIconHTML(t)}
-      <div><div class="sn">${x.season||'No season'}${live?' <span class="sm">(in progress)</span>':''}</div>
-      <div class="sm">${live?'Now':'Finished'} ${t.name}${div?' '+div:''} · peak ${TIERS[x.peakTierIdx].name} · ${x.games} games</div></div>
-    </div>`;
-  }).join('');
-  const historyHTML = chips ? `<div style="margin-bottom:18px;"><div class="modal-sec-title">Rank history</div><div class="season-chips">${chips}</div></div>` : '';
+  const hasChart = state.eloHistory.some(h=>h.player_id===id);
+  const chartHTML = hasChart ? `<div class="pp-sec"><div class="modal-sec-title">Rank history</div><div class="pp-chart"><canvas id="pp-chart" aria-label="Rank history chart"></canvas></div></div>` : '';
 
-  const hasChart = state.eloHistory.some(h=>h.player_id===id) && typeof Chart!=='undefined';
-  const chartHTML = hasChart ? `<div style="margin-bottom:18px;"><div class="modal-sec-title">Rank over time</div><div class="pp-chart"><canvas id="pp-chart"></canvas></div></div>` : '';
-
-  // duos + rivals (min 3 games)
-  const duoPairs=state.duoStats
-    .filter(d=>(d.player_a_id===id||d.player_b_id===id)&&d.games_together>=3)
-    .map(d=>{
-      const partner=state.players.find(pl=>pl.id===(d.player_a_id===id?d.player_b_id:d.player_a_id)); if(!partner) return null;
-      return {partner,g:d.games_together,w:d.wins_together,pct:Math.round(d.wins_together/d.games_together*100)};
-    }).filter(Boolean).sort((a,b)=>b.pct-a.pct||b.g-a.g).slice(0,3);
-  const h2hRecs=state.h2h
-    .filter(h=>(h.player_a_id===id||h.player_b_id===id)&&h.games>=3)
-    .map(h=>{
-      const oppId=h.player_a_id===id?h.player_b_id:h.player_a_id;
-      const myW=h.player_a_id===id?h.player_a_wins:h.player_b_wins;
-      const theirW=h.player_a_id===id?h.player_b_wins:h.player_a_wins;
-      const opp=state.players.find(pl=>pl.id===oppId); if(!opp) return null;
-      return {opp,myW,theirW,g:h.games,diff:myW-theirW};
-    }).filter(Boolean);
-  const bestH2H=[...h2hRecs].sort((a,b)=>b.diff-a.diff).slice(0,3).filter(h=>h.diff>0);
-  const worstH2H=[...h2hRecs].sort((a,b)=>a.diff-b.diff).slice(0,3).filter(h=>h.diff<0);
-  const listSec=(title,rows)=>rows.length?`<div style="margin-bottom:16px;"><div class="modal-sec-title">${title}</div>${rows.join('')}</div>`:'';
-
-  document.getElementById('modal-body').innerHTML=`
-    ${head}${progress}${records}${historyHTML}${chartHTML}
-    ${listSec('Best teammates',duoPairs.map(d=>`<div class="modal-stat-row"><span>${d.partner.name}</span><span style="">${d.w}–${d.g-d.w} <strong style="color:var(--success);">${d.pct}%</strong></span></div>`))}
-    ${listSec('Owns',bestH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style=""><strong style="color:var(--success);">${h.myW}</strong>–${h.theirW}</span></div>`))}
-    ${listSec('Nemesis',worstH2H.map(h=>`<div class="modal-stat-row"><span>vs ${h.opp.name}</span><span style="">${h.myW}–<strong style="color:var(--danger);">${h.theirW}</strong></span></div>`))}
-  `;
+  document.getElementById('modal-body').innerHTML=`${head}${tabs}${summary}${tiles}${chartHTML}${relationsHTML(id)}`;
   document.getElementById('player-modal').style.display='flex';
-  if(hasChart) renderPlayerChart(id, admin);
+  if(hasChart) renderRankChart(id, sel, admin);
 }
 
-// Rating line over coloured tier bands, with dashed lines where seasons change.
-function renderPlayerChart(id, admin){
-  const canvas=document.getElementById('pp-chart'); if(!canvas) return;
-  if(playerChart){ playerChart.destroy(); playerChart=null; }
+// ─── R6-style rank history chart ───
+// Each point carries the rank the player HELD after that game (placements are grey).
+function rankPoints(playerId){
   const ss=sessionSeasonMap(state.sessions);
   const gameSeason=new Map(state.games.map(g=>[g.id, ss.get(g.session_id)??null]));
-  const hist=state.eloHistory.filter(h=>h.player_id===id).sort((a,b)=>a.id-b.id);
-  const data=hist.map(h=>h.rating_after);
-  const labels=hist.map((_,i)=>`G${i+1}`);
-  const seps=[];
-  hist.forEach((h,i)=>{
-    const sn=gameSeason.get(h.game_id);
-    if(i===0 || sn!==gameSeason.get(hist[i-1].game_id)) seps.push({i, label:sn||''});
-  });
-  const lo=Math.min(...data)-25, hi=Math.max(...data)+25;
-  const bands={
-    id:'tierBands',
-    beforeDatasetsDraw(chart){
-      const {ctx,chartArea:a,scales:{x,y}}=chart;
-      ctx.save();
-      TIERS.forEach((t,i)=>{
-        const tLo=Math.max(i===0?y.min:t.min, y.min);
-        const tHi=Math.min(i<TIERS.length-1?TIERS[i+1].min:y.max, y.max);
-        if(tHi<=tLo) return;
-        const yTop=y.getPixelForValue(tHi), yBot=y.getPixelForValue(tLo);
-        ctx.fillStyle=t.band; ctx.fillRect(a.left,yTop,a.right-a.left,yBot-yTop);
-        if(yBot-yTop>14){
-          ctx.fillStyle=t.fg; ctx.globalAlpha=.75;
-          ctx.font='700 10px "Barlow", sans-serif'; ctx.textAlign='right';
-          ctx.fillText(t.name.toUpperCase(), a.right-6, yTop+13); ctx.globalAlpha=1;
-        }
-      });
-      seps.forEach(sp=>{
-        const px = sp.i===0 ? a.left : x.getPixelForValue(sp.i-0.5);
-        if(sp.i>0){ ctx.strokeStyle='rgba(238,242,247,.28)'; ctx.setLineDash([4,4]); ctx.beginPath(); ctx.moveTo(px,a.top); ctx.lineTo(px,a.bottom); ctx.stroke(); ctx.setLineDash([]); }
-        ctx.fillStyle='rgba(238,242,247,.55)'; ctx.font='700 10px "Barlow", sans-serif'; ctx.textAlign='left';
-        ctx.fillText(sp.label, px+5, a.bottom-6);
-      });
-      ctx.restore();
+  const hist=state.eloHistory.filter(h=>h.player_id===playerId).sort((a,b)=>a.id-b.id);
+  const pts=[]; let lifetime=0, curSeason, inSeason=0, tier=null, needed=RANK.PLACEMENT_GAMES;
+  for(const h of hist){
+    const sn=gameSeason.get(h.game_id)??null;
+    if(sn!==curSeason){ curSeason=sn; inSeason=0; tier=null; needed = lifetime>0 ? RANK.SEASON_PLACEMENT : RANK.PLACEMENT_GAMES; }
+    inSeason++; lifetime++;
+    const elo=h.rating_after;
+    let held=null;
+    if(inSeason>=needed){
+      const raw=rawTierIdx(elo);
+      if(tier===null || raw>tier) tier=raw;
+      else if(raw<tier && elo<TIERS[tier].min-RANK.DEMOTION_BUFFER) tier=raw;
+      held=tier;
     }
+    pts.push({ elo, tier: held, season: sn, div: held!=null ? divisionLabel(elo, held) : null });
+  }
+  return pts;
+}
+
+const rankImgCache = {};
+function rankImg(t){
+  if(!rankImgCache[t.name]){ const im=new Image(); im.src=`${RANK_ICON_DIR}rank-${t.name.toLowerCase()}.png`; rankImgCache[t.name]=im; }
+  return rankImgCache[t.name];
+}
+
+function renderRankChart(playerId, sel, admin){
+  const canvas=document.getElementById('pp-chart'); if(!canvas) return;
+  let pts=rankPoints(playerId);
+  if(sel!==ALL_TIME) pts=pts.filter(x=>x.season===sel);
+  if(!pts.length) return;
+
+  const draw=()=>{
+    const box=canvas.parentElement.getBoundingClientRect();
+    const W=Math.max(200,box.width), H=box.height, dpr=window.devicePixelRatio||1;
+    canvas.width=W*dpr; canvas.height=H*dpr; canvas.style.width=W+'px'; canvas.style.height=H+'px';
+    const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,W,H);
+    const top=40, bottom=H-22, left=14, right=W-14;
+    const lo=Math.min(...pts.map(p=>p.elo))-15, hi=Math.max(...pts.map(p=>p.elo))+15;
+    const X=i=> pts.length===1 ? (left+right)/2 : left+(right-left)*i/(pts.length-1);
+    const Y=v=> bottom-(v-lo)/(hi-lo)*(bottom-top);
+    const col=p=> p.tier==null ? '#6F7C8E' : TIERS[p.tier].fg;
+
+    // filled area + line, one segment at a time in the colour of the rank held
+    for(let i=1;i<pts.length;i++){
+      const a=pts[i-1], b=pts[i], c=col(b);
+      ctx.beginPath(); ctx.moveTo(X(i-1),Y(a.elo)); ctx.lineTo(X(i),Y(b.elo)); ctx.lineTo(X(i),bottom); ctx.lineTo(X(i-1),bottom); ctx.closePath();
+      ctx.fillStyle=c; ctx.globalAlpha=.13; ctx.fill(); ctx.globalAlpha=1;
+      ctx.beginPath(); ctx.moveTo(X(i-1),Y(a.elo)); ctx.lineTo(X(i),Y(b.elo));
+      ctx.strokeStyle=c; ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.stroke();
+    }
+    // baseline
+    ctx.strokeStyle='rgba(255,255,255,.08)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(left,bottom+.5); ctx.lineTo(right,bottom+.5); ctx.stroke();
+
+    // season dividers + labels
+    ctx.font='700 10px "Barlow", sans-serif'; ctx.textBaseline='alphabetic';
+    pts.forEach((p,i)=>{
+      if(i===0 || p.season!==pts[i-1].season){
+        const x = i===0 ? left : (X(i-1)+X(i))/2;
+        if(i>0){ ctx.strokeStyle='rgba(238,242,247,.25)'; ctx.setLineDash([3,4]); ctx.beginPath(); ctx.moveTo(x,top-8); ctx.lineTo(x,bottom); ctx.stroke(); ctx.setLineDash([]); }
+        ctx.fillStyle='rgba(238,242,247,.5)'; ctx.textAlign='left'; ctx.fillText((p.season||'').toUpperCase(), x+4, H-6);
+      }
+    });
+
+    // markers: first ranked point of each season, every tier change, and the latest point
+    const marks=[];
+    pts.forEach((p,i)=>{
+      if(p.tier==null) return;
+      const prev=pts[i-1];
+      const newSeason = !prev || prev.season!==p.season || prev.tier==null;
+      if(newSeason || prev.tier!==p.tier || i===pts.length-1) marks.push(i);
+    });
+    let lastX=-99;
+    marks.forEach((i,k)=>{
+      const p=pts[i], x=X(i), y=Y(p.elo), c=col(p);
+      ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2); ctx.fillStyle=c; ctx.fill();
+      ctx.lineWidth=2; ctx.strokeStyle='#131A25'; ctx.stroke();
+      const isLast = k===marks.length-1;
+      if(x-lastX < 27 && !isLast) return;          // skip badges that would overlap
+      lastX=x;
+      const im=rankImg(TIERS[p.tier]), s=26, bx=Math.min(Math.max(x-s/2,left-8),right-s+8), by=6;
+      if(im.complete && im.naturalWidth) ctx.drawImage(im,bx,by,s,s);
+      else im.onload=draw;
+      ctx.strokeStyle=c; ctx.globalAlpha=.35; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x,by+s+1); ctx.lineTo(x,y-6); ctx.stroke(); ctx.globalAlpha=1;
+      if(p.div){
+        ctx.fillStyle=c; ctx.font='800 10px "Barlow", sans-serif';
+        const roomRight = bx+s+16 <= W;                 // near the right edge, put the division on the left
+        ctx.textAlign = roomRight ? 'left' : 'right';
+        ctx.fillText(p.div, roomRight ? bx+s+1 : bx-1, by+s-3);
+      }
+    });
+    if(admin){ ctx.fillStyle='rgba(147,160,178,.8)'; ctx.font='600 10px "Barlow", sans-serif'; ctx.textAlign='right'; ctx.fillText(`${Math.round(hi)}`, right, top-12); }
   };
-  playerChart=new Chart(canvas.getContext('2d'),{
-    type:'line',
-    data:{labels,datasets:[{data,borderColor:'#EEF2F7',borderWidth:2,tension:.25,pointRadius:0,pointHoverRadius:4,pointBackgroundColor:'#EEF2F7',fill:false}]},
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{displayColors:false,callbacks:{
-        title:c=>`Game ${c[0].dataIndex+1}`,
-        label:c=>{ const v=c.parsed.y, ti=rawTierIdx(v), d=divisionLabel(v,ti); return `${TIERS[ti].name}${d?' '+d:''}${admin?` · ${v}`:''}`; }}}},
-      scales:{
-        y:{min:lo,max:hi,grid:{display:false},ticks:{display:admin,color:'#93A0B2',font:{family:'Barlow',size:10}},border:{display:false}},
-        x:{grid:{display:false},ticks:{display:false},border:{display:false}},
-      },
-    },
-    plugins:[bands],
-  });
+  draw();
 }
 
 function closePlayerModal(event){
