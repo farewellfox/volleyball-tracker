@@ -1427,33 +1427,57 @@ function teamCardHTML(players, team, swappable=false, showStats=true){
 }
 
 // One leaderboard: rank & Elo (all-time) plus W-L for the selected season. Sortable.
+// A player's rank as it stood at the END of a past season (frozen standings)
+function seasonFinalRank(player, season){
+  const r = computeRank({ ...player, retired:false });
+  const x = r.seasons.find(e=>e.season===season);
+  if(!x) return null;
+  if(!x.ranked) return { status:'placement', played:x.games, needed:x.needed, label:`Placement ${x.games}/${x.needed}`, elo:x.finalElo };
+  const t = TIERS[x.tierIdx], d = divisionLabel(x.finalElo, x.tierIdx);
+  return { status:'ranked', tierIdx:x.tierIdx, tier:t.name, icon:t.icon, division:d, label:`${t.name}${d?' '+d:''}`,
+    elo:x.finalElo, shielded:x.finalElo<t.min, promoWatch:false,
+    peakTierIdx:x.peakTierIdx, peakLabel:TIERS[x.peakTierIdx].name, peakFull:rankFromElo(x.peakElo).full };
+}
+
+// Leaderboard has three modes:
+//   current season -> live ranks, players who have played this season
+//   past season    -> final standings of that season, retired players included
+//   all-time       -> lifetime W-L with current ranks
 function renderPubLb(){
   const el = document.getElementById('pub-lb');
-  const seasons = getSeasons();
-  const prev = document.getElementById('pub-season-sel')?.value ?? 'all';
-  const seasonOpts = '<option value="all">All-time record</option>'+seasons.map(s=>`<option value="${s}">${s} record</option>`).join('');
-  const games = filterGamesBySeason(prev==='all'?null:prev);
+  const cur = currentSeason();
+  const order = seasonOrder(state.sessions).reverse();
+  const prev = document.getElementById('pub-season-sel')?.value ?? (cur || 'all');
+  const sel = (prev==='all' || order.includes(prev)) ? prev : (cur || 'all');
+  const mode = sel==='all' ? 'all' : sel===cur ? 'live' : 'past';
+  const seasonOpts = order.map(sn=>`<option value="${sn}">${sn}${sn===cur?' (current)':''}</option>`).join('') + '<option value="all">All-time</option>';
+  const games = filterGamesBySeason(mode==='all'?null:sel);
+  const cardTab = mode==='all' ? ALL_TIME : sel;
 
   const rows = state.players
-    .filter(p=>playerGameCount(p.id)>0 && (showRetiredLb||!p.retired))
+    .filter(p=>{
+      const played = mode==='all' ? playerGameCount(p.id)>0 : playerGameCountFromGames(p.id,games)>0;
+      if(!played) return false;
+      return mode==='past' ? true : (showRetiredLb || !p.retired);
+    })
     .map(p=>{
       const gc=playerGameCountFromGames(p.id,games);
       const w=playerWinsFromGames(p.id,games);
-      const rank=computeRank(p);
-      const elo=p.elo_rating||1000;
+      const rank = mode==='past' ? seasonFinalRank(p, sel) : computeRank(p);
+      const elo = mode==='past' ? rank.elo : (p.elo_rating||1000);
       return {p,rank,elo,gc,w,l:gc-w,pct:gc?Math.round(w/gc*100):null,
         sort:{name:p.name.toLowerCase(),rank:rankSortValue(rank,elo),elo,w:gc?w:null,pct:gc?w/gc:null}};
     });
   sortRows(rows,'lb');
   const top3 = sortState.lb.key==='rank' && sortState.lb.dir<0;
-  // Podium: top 3 by rank, only when sorted by rank and all three are ranked this season
+  // Podium: top 3 by rank, only when sorted by rank and all three are ranked
   const usePodium = top3 && rows.length>=4 && rows.slice(0,3).every(r=>r.rank.status==='ranked');
   const podRows = usePodium ? rows.slice(0,3) : [];
   const tableRows = usePodium ? rows.slice(3) : rows;
   const podItem = (r, pos) => {
     const t=TIERS[r.rank.tierIdx];
     const sz = pos===1 ? [92,90,'var(--gold)'] : pos===2 ? [64,64,'var(--silver)'] : [58,48,'var(--bronze)'];
-    return `<div class="pod" onclick="showPlayerModal(${r.p.id},false)" title="${rankProgress(r.rank).long}">
+    return `<div class="pod" onclick="showPlayerModal(${r.p.id},false,'${cardTab}')" title="${rankProgress(r.rank).long}">
       ${tierIconHTML(t,'rank-icon',sz[0])}
       <div class="pod-name">${r.p.name}</div>
       <div class="pod-rank" style="color:${t.fg};">${r.rank.label}</div>
@@ -1466,7 +1490,7 @@ function renderPubLb(){
   const body = tableRows.length ? tableRows.map((r,j)=>{
     const i = j + posOffset;
     const pc = top3 ? (i===0?' r1':i===1?' r2':i===2?' r3':'') : '';
-    return `<tr class="clickable${r.p.retired?' is-retired':''}" onclick="showPlayerModal(${r.p.id},false)">
+    return `<tr class="clickable${r.p.retired&&mode!=='past'?' is-retired':''}" onclick="showPlayerModal(${r.p.id},false,'${cardTab}')">
       <td class="pos${pc}">${i+1}</td>
       <td class="l"><span style="font-weight:500;">${r.p.name}</span>${retTag(r.p)}</td>
       <td class="l">${rankBadgeHTML(r.rank,true)}</td>
@@ -1477,17 +1501,20 @@ function renderPubLb(){
   }).join('') : '<tr><td colspan="6"><div class="empty">No games yet.</div></td></tr>';
 
   const retiredCount = state.players.filter(p=>p.retired&&playerGameCount(p.id)>0).length;
-  const cur = currentSeason();
+  const note = mode==='live' ? `Live ranks for ${sel}. Tap a column to sort, or a player to see their card.`
+             : mode==='past' ? `Final standings from ${sel}, including players who've since retired.`
+             : `Lifetime records. Ranks shown are this season's.`;
+  const tag = mode==='past' ? `${sel} · final` : mode==='live' ? sel : 'All-time';
   el.innerHTML=`
     <div class="lb-head">
-      <div class="sec-title">Ranked${cur?`<span class="season-tag">${cur}</span>`:''}</div>
+      <div class="sec-title">Ranked<span class="season-tag">${tag}</span></div>
       <button class="btn btn-sm" onclick="showRanksInfo()">How ranks work</button>
     </div>
     <div class="tbl-controls">
-      <select id="pub-season-sel" onchange="renderPubLb()">${seasonOpts}</select>
-      ${retiredCount?`<label class="chk"><input type="checkbox" ${showRetiredLb?'checked':''} onchange="showRetiredLb=this.checked;renderPubLb()">Retired</label>`:''}
+      <select id="pub-season-sel" onchange="renderPubLb()" aria-label="Season">${seasonOpts}</select>
+      ${retiredCount&&mode!=='past'?`<label class="chk"><input type="checkbox" ${showRetiredLb?'checked':''} onchange="showRetiredLb=this.checked;renderPubLb()">Retired</label>`:''}
     </div>
-    <div class="tbl-note">Rank is for the current season. W-L follows the record picked above. Tap a column to sort, or a player to see their card.</div>
+    <div class="tbl-note">${note}</div>
     ${podiumHTML}
     <div class="card" style="padding:8px 4px;overflow-x:auto;">
       <table class="stats-tbl">
@@ -1502,7 +1529,7 @@ function renderPubLb(){
         <tbody>${body}</tbody>
       </table>
     </div>`;
-  document.getElementById('pub-season-sel').value=prev;
+  document.getElementById('pub-season-sel').value=sel;
 }
 
 function buildDuos(){
